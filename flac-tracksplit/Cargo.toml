@@ -1,0 +1,15 @@
+[package]
+edition = '2021'
+name = "flac-tracksplit"
+version = "0.0.1-dev"
+authors = ["Andreas Fuchs <asf@boinkor.net>"]
+license = "MIT"
+repository = "https://github.com/antifuchs/flac-tracksplit"
+readme = "README.md"
+description = "Split FLAC+CUE (embedded) into multiple tracks"
+documentation = "https://docs.rs/flac-tracksplit"
+
+[badges]
+maintenance = { status = "passively-maintained" }
+
+[dependencies]
