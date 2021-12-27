@@ -17,8 +17,9 @@ byteorder = "1.4.3"
 claxon = "0.4.3"
 int-conv = "0.1.4"
 num = "0.4.0"
-symphonia-bundle-flac = "0.4.0"
-symphonia-core = "0.4.0"
+symphonia-bundle-flac = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
+symphonia-core = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
+symphonia-utils-xiph = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
 thiserror = "1.0.30"
 
 [dev-dependencies]

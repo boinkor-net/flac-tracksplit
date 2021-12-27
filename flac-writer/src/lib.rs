@@ -2,6 +2,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 use std::io::{self, Write};
 use stream_info::{write_streaminfo, WriteStreamInfoError};
 
+// TODO: Replace claxon's StreamInfo with symphonia-utils-xiph's
 use claxon::metadata::{MetadataBlock, StreamInfo};
 
 pub mod stream_info;

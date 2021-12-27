@@ -13,3 +13,6 @@ documentation = "https://docs.rs/flac-tracksplit"
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
+symphonia-bundle-flac = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
+symphonia-core = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
+symphonia-utils-xiph = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
