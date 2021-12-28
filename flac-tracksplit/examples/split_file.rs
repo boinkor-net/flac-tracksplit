@@ -1,7 +1,11 @@
 use std::fs::File;
 
 use symphonia_bundle_flac::FlacReader;
-use symphonia_core::{formats::FormatReader, io::MediaSourceStream, meta::Tag};
+use symphonia_core::{
+    formats::{Cue, FormatReader},
+    io::MediaSourceStream,
+    meta::Tag,
+};
 use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 fn main() {
@@ -19,16 +23,33 @@ fn main() {
             .expect("parse STREAMINFO");
         println!("streaminfo: {:?}", info);
     }
-    println!("cues: {:?}", reader.cues());
+    let cues: Vec<Cue> = reader.cues().iter().cloned().collect();
+    println!("cues: {:?}", cues);
     let metadata = reader.metadata();
     let tags = metadata.current().expect("tags").tags();
-    // println!("meta: {:?}", tags);
-    println!("track6: {:?}", Track::from_tags(6, &tags));
+
+    let mut cue_iter = cues.iter().peekable();
+    while let Some(cue) = cue_iter.next() {
+        let mut next = cue_iter.peek();
+        if let Some(LEAD_OUT_TRACK_NUMBER) = next.map(|n| n.index) {
+            // we have a lead-out, capture the whole in the last track.
+            next = None;
+        }
+        let track = Track::from_tags(cue, next, &tags);
+        println!("\ntrack {}: {:?}", track.number, track);
+        if next.is_none() {
+            break;
+        }
+    }
 }
+
+const LEAD_OUT_TRACK_NUMBER: u32 = 170;
 
 #[derive(Clone, Debug)]
 struct Track {
-    number: usize,
+    number: u32,
+    start_ts: u64,
+    end_ts: Option<u64>,
     tags: Vec<Tag>,
 }
 
@@ -37,8 +58,8 @@ impl Track {
         !name.ends_with("]") && name != "CUESHEET" && name != "LOG"
     }
 
-    fn from_tags(number: usize, tags: &[Tag]) -> Self {
-        let suffix = format!("[{}]", number);
+    fn from_tags(cue: &Cue, next: Option<&&Cue>, tags: &[Tag]) -> Self {
+        let suffix = format!("[{}]", cue.index);
         let tags = tags
             .into_iter()
             .filter_map(|tag| {
@@ -52,6 +73,11 @@ impl Track {
                 tag_name.map(|key| Tag::new(tag.std_key, key, tag.value.clone()))
             })
             .collect();
-        Self { number, tags }
+        Self {
+            number: cue.index,
+            start_ts: cue.start_ts,
+            end_ts: next.map(|cue| cue.start_ts),
+            tags,
+        }
     }
 }
