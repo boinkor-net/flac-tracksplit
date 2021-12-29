@@ -2,9 +2,10 @@
 
 use std::io::{self, Write};
 
+use crate::MetadataBlock;
 use byteorder::{BigEndian, WriteBytesExt};
-use claxon::metadata::{MetadataBlock, StreamInfo};
 use int_conv::Truncate;
+use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 use crate::write_metadata_block_header;
 
@@ -30,12 +31,12 @@ pub trait StreamInfoWriteExt: Sized {
 
 impl StreamInfoWriteExt for StreamInfo {
     fn with_md5(mut self, md5sum: [u8; 16]) -> Self {
-        self.md5sum = md5sum;
+        self.md5 = md5sum;
         self
     }
 
     fn with_samples(mut self, samples: Option<u64>) -> Self {
-        self.samples = samples;
+        self.n_samples = samples;
         self
     }
 }
@@ -54,12 +55,12 @@ pub(crate) fn write_streaminfo<S: Write>(
     info: &StreamInfo,
     is_last: bool,
 ) -> Result<(), WriteStreamInfoError> {
-    write_metadata_block_header(to, is_last, &MetadataBlock::StreamInfo(*info))?;
+    write_metadata_block_header(to, is_last, &MetadataBlock::StreamInfo(info))?;
 
-    to.write_u16::<BigEndian>(info.min_block_size)?;
-    to.write_u16::<BigEndian>(info.max_block_size)?;
-    to.write_u24::<BigEndian>(info.min_frame_size.unwrap_or(0))?;
-    to.write_u24::<BigEndian>(info.max_frame_size.unwrap_or(0))?;
+    to.write_u16::<BigEndian>(info.block_len_min)?;
+    to.write_u16::<BigEndian>(info.block_len_max)?;
+    to.write_u24::<BigEndian>(info.frame_byte_len_min)?;
+    to.write_u24::<BigEndian>(info.frame_byte_len_max)?;
 
     to.write_u16::<BigEndian>((info.sample_rate >> 4).truncate())?;
 
@@ -69,7 +70,7 @@ pub(crate) fn write_streaminfo<S: Write>(
     // 1 bit for the most significant bit of the bits per sample (minus one).
     let sample_rate_ls_nybble: u8 = (info.sample_rate & 0b1111).truncate();
 
-    let num_channels: u8 = (info.channels - 1).truncate();
+    let num_channels: u8 = (info.channels.bits() - 1).truncate();
     let bits_per_sample: u8 = (info.bits_per_sample - 1).truncate();
     let bps_msb = bits_per_sample >> 4;
     to.write_u8((sample_rate_ls_nybble) << 5 | (num_channels << 1) | bps_msb)?;
@@ -78,12 +79,12 @@ pub(crate) fn write_streaminfo<S: Write>(
     // 4 least significant bits of the bps
     // 4 most significant bits of the total sample count.
     let bps_lsb = bits_per_sample & 0b1111;
-    let samples = info.samples.unwrap_or(0);
+    let samples = info.n_samples.unwrap_or(0);
     let n_samples_msb: u8 = (samples >> 32).truncate();
     to.write_u8(bps_lsb << 4 | n_samples_msb)?;
 
     to.write_u32::<BigEndian>((samples & 0xFFFF_FFFF).truncate())?;
 
-    to.write_all(&info.md5sum)?;
+    to.write_all(&info.md5)?;
     Ok(())
 }

@@ -1,4 +1,6 @@
-use claxon::{metadata::StreamInfo, FlacReader, FlacReaderOptions};
+use claxon::{FlacReader, FlacReaderOptions};
+use symphonia_core::audio::Channels;
+use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 use super::*;
 
@@ -14,15 +16,15 @@ fn md5_checksum<const N: usize>(checksum: &str) -> [u8; N] {
 #[test]
 fn simple_streaminfo() {
     let si = StreamInfo {
-        min_block_size: 4608,
-        max_block_size: 4608,
-        min_frame_size: Some(0),
-        max_frame_size: Some(19024),
+        block_len_min: 4608,
+        block_len_max: 4608,
+        frame_byte_len_min: 0,
+        frame_byte_len_max: 19024,
         sample_rate: 44100,
-        channels: 2,
+        channels: Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
         bits_per_sample: 16,
-        samples: Some(118981800),
-        md5sum: md5_checksum("2d19476b6abc3ef4e7c32b64110e59a5"),
+        n_samples: Some(118981800),
+        md5: md5_checksum("2d19476b6abc3ef4e7c32b64110e59a5"),
     };
     let mut buf = Vec::new();
     write_flac_stream_header(&mut buf, &si, &[]).unwrap();
@@ -38,6 +40,6 @@ fn simple_streaminfo() {
     )
     .expect("read back the FLAC header");
     let si_back = fr.streaminfo();
-    assert_eq!(si_back.md5sum, si.md5sum);
-    assert_eq!(si_back.channels, si.channels);
+    assert_eq!(si_back.md5sum, si.md5);
+    assert_eq!(si_back.channels, si.channels.bits());
 }

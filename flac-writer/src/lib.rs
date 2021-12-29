@@ -2,8 +2,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 use std::io::{self, Write};
 use stream_info::{write_streaminfo, WriteStreamInfoError};
 
-// TODO: Replace claxon's StreamInfo with symphonia-utils-xiph's
-use claxon::metadata::{MetadataBlock, StreamInfo};
+use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 pub mod stream_info;
 pub use stream_info::StreamInfoWriteExt;
@@ -11,6 +10,17 @@ pub use stream_info::StreamInfoWriteExt;
 const FLAC_STREAM_MARKER: &[u8; 4] = b"fLaC";
 
 const STREAMINFO_BYTE_LENGTH: u32 = 34;
+
+pub enum MetadataBlock<'a> {
+    StreamInfo(&'a StreamInfo),
+    Padding { length: u32 },
+    Application { id: u32, data: Vec<u8> },
+    SeekTable,     // TODO
+    VorbisComment, // TODO
+    CueSheet,
+    Picture, // TODO
+    Reserved,
+}
 
 /// Errors that can occur during metadata-block writing.
 #[derive(Debug, thiserror::Error)]
