@@ -35,32 +35,6 @@ pub enum WriteMetadataBlockHeaderError {
     Io(#[from] io::Error),
 }
 
-fn write_metadata_block_header<S: Write>(
-    to: &mut S,
-    is_last: bool,
-    block: &MetadataBlock,
-) -> Result<(), WriteMetadataBlockHeaderError> {
-    use MetadataBlock::*;
-    let (block_type, byte_length) = match block {
-        StreamInfo(_) => (0, STREAMINFO_BYTE_LENGTH),
-        Padding { length } => (1, *length),
-        // Application { .. } => 2,
-        // SeekTable { .. } => 3,
-        // VorbisComment(_) => 4,
-        // CueSheet => 5,
-        // Picture => 6,
-        _ => return Err(WriteMetadataBlockHeaderError::UnknownType),
-    };
-
-    // 31: is last
-    // 30..24: type
-    // 24..0: length of data to follow.
-    let header = block_type | (is_last as u8) << 7;
-    to.write_u8(header)?;
-    to.write_u24::<BigEndian>(byte_length)?;
-    Ok(())
-}
-
 /// Errors that `write_flac_stream_header` can return.
 #[derive(Debug, thiserror::Error)]
 pub enum WriteFlacStreamError {
@@ -93,6 +67,8 @@ pub fn write_flac_stream_header<S: Write>(
         match block {
             MetadataBlock::StreamInfo(info) => write_streaminfo(to, info)?,
             MetadataBlock::Padding { length } => write_padding(to, *length)?,
+
+            // TODO:
             MetadataBlock::Application { .. } => todo!(),
             MetadataBlock::SeekTable => todo!(),
             MetadataBlock::VorbisComment { .. } => todo!(),
@@ -101,6 +77,32 @@ pub fn write_flac_stream_header<S: Write>(
             MetadataBlock::Reserved => todo!(),
         }
     }
+    Ok(())
+}
+
+fn write_metadata_block_header<S: Write>(
+    to: &mut S,
+    is_last: bool,
+    block: &MetadataBlock,
+) -> Result<(), WriteMetadataBlockHeaderError> {
+    use MetadataBlock::*;
+    let (block_type, byte_length) = match block {
+        StreamInfo(_) => (0, STREAMINFO_BYTE_LENGTH),
+        Padding { length } => (1, *length),
+        // Application { .. } => 2,
+        // SeekTable { .. } => 3,
+        // VorbisComment(_) => 4,
+        // CueSheet => 5,
+        // Picture => 6,
+        _ => return Err(WriteMetadataBlockHeaderError::UnknownType),
+    };
+
+    // 31: is last
+    // 30..24: type
+    // 24..0: length of data to follow.
+    let header = block_type | (is_last as u8) << 7;
+    to.write_u8(header)?;
+    to.write_u24::<BigEndian>(byte_length)?;
     Ok(())
 }
 
