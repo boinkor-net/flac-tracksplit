@@ -53,10 +53,7 @@ pub enum WriteStreamInfoError {
 pub(crate) fn write_streaminfo<S: Write>(
     to: &mut S,
     info: &StreamInfo,
-    is_last: bool,
 ) -> Result<(), WriteStreamInfoError> {
-    write_metadata_block_header(to, is_last, &MetadataBlock::StreamInfo(info))?;
-
     to.write_u16::<BigEndian>(info.block_len_min)?;
     to.write_u16::<BigEndian>(info.block_len_max)?;
     to.write_u24::<BigEndian>(info.frame_byte_len_min)?;

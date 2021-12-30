@@ -81,7 +81,9 @@ pub fn write_flac_stream_header<S: Write>(
     blocks: &[&MetadataBlock],
 ) -> Result<(), WriteFlacStreamError> {
     to.write_all(FLAC_STREAM_MARKER)?;
-    write_streaminfo(to, info, blocks.is_empty())?;
+    let streaminfo_is_last = blocks.is_empty();
+    write_metadata_block_header(to, streaminfo_is_last, &MetadataBlock::StreamInfo(info))?;
+    write_streaminfo(to, info)?;
     let mut block_iter = blocks.iter().peekable();
     while let Some(block) = block_iter.next() {
         write_metadata_block_header(to, block_iter.peek().is_none(), block)?;
