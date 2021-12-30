@@ -1,9 +1,12 @@
 use byteorder::{BigEndian, WriteBytesExt};
+use padding::write_padding;
 use std::io::{self, Write};
 use stream_info::{write_streaminfo, WriteStreamInfoError};
 
+use symphonia_core::meta::{Tag, Visual};
 use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
+pub mod padding;
 pub mod stream_info;
 pub use stream_info::StreamInfoWriteExt;
 
@@ -14,11 +17,11 @@ const STREAMINFO_BYTE_LENGTH: u32 = 34;
 pub enum MetadataBlock<'a> {
     StreamInfo(&'a StreamInfo),
     Padding { length: u32 },
-    Application { id: u32, data: Vec<u8> },
-    SeekTable,     // TODO
-    VorbisComment, // TODO
+    Application { id: u32, data: &'a [u8] },
+    SeekTable, // TODO
+    VorbisComment { tags: &'a [Tag] },
     CueSheet,
-    Picture, // TODO
+    Picture { picture: &'a Visual },
     Reserved,
 }
 
@@ -40,7 +43,7 @@ fn write_metadata_block_header<S: Write>(
     use MetadataBlock::*;
     let (block_type, byte_length) = match block {
         StreamInfo(_) => (0, STREAMINFO_BYTE_LENGTH),
-        // Padding { .. } => 1,
+        Padding { length } => (1, *length),
         // Application { .. } => 2,
         // SeekTable { .. } => 3,
         // VorbisComment(_) => 4,
@@ -87,6 +90,16 @@ pub fn write_flac_stream_header<S: Write>(
     let mut block_iter = blocks.iter().peekable();
     while let Some(block) = block_iter.next() {
         write_metadata_block_header(to, block_iter.peek().is_none(), block)?;
+        match block {
+            MetadataBlock::StreamInfo(info) => write_streaminfo(to, info)?,
+            MetadataBlock::Padding { length } => write_padding(to, *length)?,
+            MetadataBlock::Application { .. } => todo!(),
+            MetadataBlock::SeekTable => todo!(),
+            MetadataBlock::VorbisComment { .. } => todo!(),
+            MetadataBlock::CueSheet => todo!(),
+            MetadataBlock::Picture { .. } => todo!(),
+            MetadataBlock::Reserved => todo!(),
+        }
     }
     Ok(())
 }

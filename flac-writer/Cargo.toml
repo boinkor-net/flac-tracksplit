@@ -16,6 +16,7 @@ maintenance = { status = "passively-maintained" }
 byteorder = "1.4.3"
 claxon = "0.4.3"
 int-conv = "0.1.4"
+itertools = "0.10.3"
 num = "0.4.0"
 symphonia-bundle-flac = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
 symphonia-core = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }

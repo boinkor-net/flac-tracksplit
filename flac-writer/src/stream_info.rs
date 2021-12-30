@@ -2,12 +2,9 @@
 
 use std::io::{self, Write};
 
-use crate::MetadataBlock;
 use byteorder::{BigEndian, WriteBytesExt};
 use int_conv::Truncate;
 use symphonia_utils_xiph::flac::metadata::StreamInfo;
-
-use crate::write_metadata_block_header;
 
 /// Extension trait for writing a [`StreamInfo`] extension trait to a
 /// stream.
