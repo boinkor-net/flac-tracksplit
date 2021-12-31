@@ -41,13 +41,18 @@ fn main() {
         println!(
             "\ntrack {}: {:?} = {:?}",
             track.number,
-            track.filename(),
+            track.pathname(),
             track
         );
         if next.is_none() {
             break;
         }
     }
+    println!("first packet ts: {:?}", reader.next_packet().unwrap().pts());
+    println!(
+        "second packet ts: {:?}",
+        reader.next_packet().unwrap().pts()
+    );
 }
 
 const LEAD_OUT_TRACK_NUMBER: u32 = 170;
@@ -109,7 +114,7 @@ impl Track {
             .map(|found| &found.value)
     }
 
-    fn filename(&self) -> PathBuf {
+    fn pathname(&self) -> PathBuf {
         let mut buf = PathBuf::new();
         if let Some(Value::String(artist)) = self.tag_value("ALBUMARTIST") {
             buf.push(artist);
@@ -120,7 +125,11 @@ impl Track {
         }
 
         if let Some(Value::String(album)) = self.tag_value("ALBUM") {
-            buf.push(album);
+            if let Some(Value::String(year)) = self.tag_value("DATE") {
+                buf.push(format!("{} - {}", year, album));
+            } else {
+                buf.push(album);
+            }
         } else {
             buf.push("Unknown Album");
         }
