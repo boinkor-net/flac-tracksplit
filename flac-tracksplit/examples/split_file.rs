@@ -1,12 +1,12 @@
 use std::{fs::File, path::PathBuf, str::FromStr};
 
+use metaflac::block::StreamInfo;
 use symphonia_bundle_flac::FlacReader;
 use symphonia_core::{
     formats::{Cue, FormatReader},
     io::MediaSourceStream,
     meta::{Tag, Value, Visual},
 };
-use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 fn main() {
     let file = File::open("test.flac").expect("opening test.flac");
@@ -19,46 +19,39 @@ fn main() {
         .codec_params
         .extra_data
     {
-        let info = StreamInfo::read(&mut symphonia_core::io::BufReader::new(&data))
-            .expect("parse STREAMINFO");
-        println!("streaminfo: {:?}", info);
-    }
-    let cues: Vec<Cue> = reader.cues().iter().cloned().collect();
-    println!("cues: {:?}", cues);
-    let metadata = reader.metadata();
-    let current_metadata = metadata.current().expect("tags");
-    let tags = current_metadata.tags();
-    let visuals = current_metadata.visuals();
+        let info = StreamInfo::from_bytes(data);
+        let cues: Vec<Cue> = reader.cues().iter().cloned().collect();
+        let metadata = reader.metadata();
+        let current_metadata = metadata.current().expect("tags");
+        let tags = current_metadata.tags();
+        let visuals = current_metadata.visuals();
 
-    let mut cue_iter = cues.iter().peekable();
-    while let Some(cue) = cue_iter.next() {
-        let mut next = cue_iter.peek();
-        if let Some(LEAD_OUT_TRACK_NUMBER) = next.map(|n| n.index) {
-            // we have a lead-out, capture the whole in the last track.
-            next = None;
-        }
-        let track = Track::from_tags(cue, next, &tags, &visuals);
-        println!(
-            "\ntrack {}: {:?} = {:?}",
-            track.number,
-            track.pathname(),
-            track
-        );
-        if next.is_none() {
-            break;
+        let mut cue_iter = cues.iter().peekable();
+        while let Some(cue) = cue_iter.next() {
+            let mut next = cue_iter.peek();
+            if let Some(LEAD_OUT_TRACK_NUMBER) = next.map(|n| n.index) {
+                // we have a lead-out, capture the whole in the last track.
+                next = None;
+            }
+            let track = Track::from_tags(&info, cue, next, &tags, &visuals);
+            println!(
+                "\ntrack {}: {:?} = {:?}",
+                track.number,
+                track.pathname(),
+                track
+            );
+            if next.is_none() {
+                break;
+            }
         }
     }
-    println!("first packet ts: {:?}", reader.next_packet().unwrap().pts());
-    println!(
-        "second packet ts: {:?}",
-        reader.next_packet().unwrap().pts()
-    );
 }
 
 const LEAD_OUT_TRACK_NUMBER: u32 = 170;
 
 #[derive(Clone)]
 struct Track {
+    streaminfo: StreamInfo,
     number: u32,
     start_ts: u64,
     end_ts: Option<u64>,
@@ -82,7 +75,13 @@ impl Track {
         !name.ends_with("]") && name != "CUESHEET" && name != "LOG"
     }
 
-    fn from_tags(cue: &Cue, next: Option<&&Cue>, tags: &[Tag], visuals: &[Visual]) -> Self {
+    fn from_tags(
+        streaminfo: &StreamInfo,
+        cue: &Cue,
+        next: Option<&&Cue>,
+        tags: &[Tag],
+        visuals: &[Visual],
+    ) -> Self {
         let suffix = format!("[{}]", cue.index);
         let tags = tags
             .into_iter()
@@ -99,6 +98,11 @@ impl Track {
             .collect();
         let visuals = visuals.into_iter().cloned().collect();
         Self {
+            streaminfo: StreamInfo {
+                md5: [0u8; 16].to_vec(),
+                total_samples: 0, // TODO: maybe figure out how long each track is
+                ..streaminfo.clone()
+            },
             number: cue.index,
             start_ts: cue.start_ts,
             end_ts: next.map(|cue| cue.start_ts),
