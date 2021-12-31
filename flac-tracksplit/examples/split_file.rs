@@ -1,6 +1,15 @@
-use std::{fs::File, path::PathBuf, str::FromStr};
+use std::{
+    fs::{create_dir_all, File},
+    io::{self, Write},
+    num::NonZeroU32,
+    path::PathBuf,
+    str::FromStr,
+};
 
-use metaflac::block::StreamInfo;
+use metaflac::{
+    block::{Picture, PictureType, StreamInfo, VorbisComment},
+    Block,
+};
 use symphonia_bundle_flac::FlacReader;
 use symphonia_core::{
     formats::{Cue, FormatReader},
@@ -32,6 +41,7 @@ fn main() {
             if let Some(LEAD_OUT_TRACK_NUMBER) = next.map(|n| n.index) {
                 // we have a lead-out, capture the whole in the last track.
                 next = None;
+                cue_iter.next();
             }
             let track = Track::from_tags(&info, cue, next, &tags, &visuals);
             println!(
@@ -40,9 +50,14 @@ fn main() {
                 track.pathname(),
                 track
             );
-            if next.is_none() {
-                break;
+            let path = track.pathname();
+            if let Some(parent) = path.parent() {
+                create_dir_all(parent).expect("creating album dir");
             }
+            let f = File::create(track.pathname()).unwrap();
+            track
+                .write_out(f)
+                .expect(&format!("writing track {:?}", track.pathname()));
         }
     }
 }
@@ -148,5 +163,46 @@ impl Track {
             }
         }
         buf
+    }
+
+    fn write_out<S: Write>(&self, mut to: S) -> anyhow::Result<()> {
+        to.write_all(b"fLaC")?;
+        let comment = VorbisComment {
+            vendor_string: "asf's silly track splitter".to_string(),
+            comments: self
+                .tags
+                .iter()
+                .map(|tag| (tag.key.to_string(), vec![tag.value.to_string()]))
+                .collect(),
+        };
+        let pictures: Vec<Block> = self
+            .visuals
+            .iter()
+            .map(|visual| {
+                Block::Picture(Picture {
+                    picture_type: PictureType::Other,
+                    mime_type: visual.media_type.to_string(),
+                    description: "".to_string(),
+                    width: visual.dimensions.map(|s| s.width).unwrap_or(0),
+                    height: visual.dimensions.map(|s| s.height).unwrap_or(0),
+                    depth: visual.bits_per_pixel.map(NonZeroU32::get).unwrap_or(0),
+                    num_colors: match visual.color_mode {
+                        Some(symphonia_core::meta::ColorMode::Discrete) => 0,
+                        Some(symphonia_core::meta::ColorMode::Indexed(n)) => n.get(),
+                        None => 0,
+                    },
+                    data: visual.data.to_vec(),
+                })
+            })
+            .collect();
+        let headers = vec![
+            Block::StreamInfo(self.streaminfo.clone()),
+            Block::VorbisComment(comment),
+        ];
+        let mut blocks = headers.into_iter().chain(pictures.into_iter()).peekable();
+        while let Some(block) = blocks.next() {
+            block.write_to(blocks.peek().is_none(), &mut to)?;
+        }
+        Ok(())
     }
 }
