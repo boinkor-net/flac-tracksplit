@@ -1,4 +1,5 @@
 use anyhow::Context;
+use int_conv::Truncate;
 use metaflac::{
     block::{Picture, PictureType, StreamInfo, VorbisComment},
     Block,
@@ -241,13 +242,20 @@ impl Track {
     fn write_audio<S: Write>(&self, from: &mut FlacReader, mut to: S) -> anyhow::Result<()> {
         // TODO: Maybe seek. Currently, this is only called in sequence, so no need to do that.
         let mut last_end: u64 = 0;
+        let mut first_sample_offset: Option<u64> = None;
         loop {
             // TODO: the "end" logic below is wrong.
             let packet = from
                 .next_packet()
                 .with_context(|| format!("last end: {:?} vs {:?}", last_end, self.end_ts))?;
             let mut buf = symphonia_core::io::BufReader::new(&packet.buf()[4..14]);
-            println!("frame header: {:?}", utf8_decode_be_u64(&mut buf));
+            let (orig_sample_offset, sample_offset_len) = utf8_decode_be_u64(&mut buf)?;
+            if first_sample_offset.is_none() {
+                println!("first sample offset: {}", orig_sample_offset);
+                first_sample_offset.replace(orig_sample_offset);
+            }
+            let sample_offset = orig_sample_offset - first_sample_offset.unwrap();
+
             let ts = packet.pts();
             assert!(
                 ts >= self.start_ts,
@@ -255,7 +263,10 @@ impl Track {
                 ts,
                 self.start_ts
             );
-            to.write_all(packet.buf())?;
+            let mut updated_buf = packet.buf()[0..4].to_owned();
+            updated_buf.extend(utf8_encode_be_u64(sample_offset)?);
+            updated_buf.extend(&packet.buf()[(4 + sample_offset_len as usize)..packet.buf().len()]);
+            to.write_all(&updated_buf)?;
             last_end = ts + packet.duration();
             if ts + packet.duration() >= self.end_ts {
                 return Ok(());
@@ -266,12 +277,10 @@ impl Track {
 
 /// Decodes a big-endian unsigned integer encoded via extended UTF8. In this context, extended UTF8
 /// simply means the encoded UTF8 value may be up to 7 bytes for a maximum integer bit width of
-/// 36-bits.
+/// 36-bits. Returns the number of bytes that contain the encoded number as the second value.
 ///
 // Taken from symphonia.
-fn utf8_decode_be_u64<B: symphonia_core::io::ReadBytes>(
-    src: &mut B,
-) -> anyhow::Result<Option<u64>> {
+fn utf8_decode_be_u64<B: symphonia_core::io::ReadBytes>(src: &mut B) -> anyhow::Result<(u64, u32)> {
     // Read the first byte of the UTF8 encoded integer.
     let mut state = u64::from(src.read_u8()?);
 
@@ -281,14 +290,14 @@ fn utf8_decode_be_u64<B: symphonia_core::io::ReadBytes>(
     // of range return None as this is either not the start of a UTF8 sequence or the prefix is
     // incorrect.
     let mask: u8 = match state {
-        0x00..=0x7f => return Ok(Some(state)),
+        0x00..=0x7f => return Ok((state, 1)),
         0xc0..=0xdf => 0x1f,
         0xe0..=0xef => 0x0f,
         0xf0..=0xf7 => 0x07,
         0xf8..=0xfb => 0x03,
         0xfc..=0xfd => 0x01,
         0xfe => 0x00,
-        _ => return Ok(None),
+        _ => anyhow::bail!("invalid utf-8 encoded sample/frame number"),
     };
 
     // Obtain the data bits from the first byte by using the data mask.
@@ -308,5 +317,98 @@ fn utf8_decode_be_u64<B: symphonia_core::io::ReadBytes>(
         // TODO: Validation? Invalid if the byte is greater than 0x3f.
     }
 
-    Ok(Some(state))
+    Ok((state, mask.leading_zeros() - 1))
+}
+
+fn utf8_encode_be_u64(input: u64) -> anyhow::Result<Vec<u8>> {
+    let mut number = input;
+    let start_mask: u8 = match number.leading_zeros() {
+        57..=64 => return Ok(vec![number.truncate()]),
+        53..=56 => 0b1100_0000,
+        48..=52 => 0b1110_0000,
+        44..=47 => 0b1111_0000,
+        39..=43 => 0b1111_1000,
+        34..=38 => 0b1111_1100,
+        29..=33 => 0b1111_1110,
+        00..=28 | 65..=u32::MAX => unreachable!("can't encode more than 7 leading bits"),
+    };
+    debug_assert!(
+        64 - input.leading_zeros()
+            <= (start_mask.count_ones() - 1) * 6 + (start_mask.count_zeros() - 1),
+        "Number with {} set bits ({:b}) to be represented in {} bits",
+        64 - input.leading_zeros(),
+        input,
+        (start_mask.count_ones() - 1) * 6 + (start_mask.count_zeros() - 1)
+    );
+    let len: usize = start_mask.count_ones() as usize;
+    // println!(
+    //     "allocating a vec {:?} for mask {:b} for {} zeros",
+    //     len,
+    //     start_mask,
+    //     input.leading_zeros()
+    // );
+    let mut val = vec![0; len];
+    let mut posn = len - 1;
+    while posn > 0 {
+        let byte: u8 = number.truncate();
+        val[posn] = (byte & 0x3f) | 0b10000000;
+        number >>= 6;
+        posn -= 1;
+    }
+    let byte: u8 = number.truncate();
+    val[0] = byte | start_mask;
+    debug_assert_eq!(
+        0,
+        byte >> (start_mask.count_zeros() - 1) as usize,
+        "Should have 0 set bits left"
+    );
+    Ok(val)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::fmt;
+    use symphonia_core::io::BufReader;
+
+    struct V<'a>(&'a [u8]);
+
+    impl<'a> fmt::Binary for V<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            // extract the value using tuple idexing
+            // and create reference to 'vec'
+            let vec = &self.0;
+
+            // @count -> the index of the value,
+            // @n     -> the value
+            for (count, n) in vec.iter().enumerate() {
+                if count != 0 {
+                    write!(f, " ")?;
+                }
+
+                write!(f, "{:b}", n)?;
+            }
+
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_encoding() {
+        let inputs: &[u64] = &[0x85, 0x863, 0x18427, 0xf88204, 0x04];
+        for input in inputs {
+            let encoded = utf8_encode_be_u64(*input).expect("encoding");
+            let mut buf = BufReader::new(&encoded);
+            let decoded =
+                utf8_decode_be_u64(&mut buf).expect(&format!("decoding {:b}", V(&encoded)));
+            assert_eq!(
+                (*input, encoded.len() as u32),
+                decoded,
+                "received:\n{:#064b} but wanted:\n{:#064b}",
+                decoded.0,
+                input
+            );
+            println!("yay: {}", input);
+        }
+    }
 }
