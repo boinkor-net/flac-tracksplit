@@ -4,13 +4,11 @@ use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 use super::*;
 
-fn md5_checksum<const N: usize>(checksum: &str) -> [u8; N] {
+fn md5_checksum<const N: usize>(checksum: &str) -> Option<[u8; N]> {
     hex::decode(checksum)
         .expect("decoding MD5 checksum hex string")
         .try_into()
-        .unwrap_or_else(|v: Vec<u8>| {
-            panic!("Expected a Vec of length {} but it was {}", N, v.len())
-        })
+        .ok()
 }
 
 #[test]
@@ -40,7 +38,7 @@ fn simple_streaminfo() {
     )
     .expect("read back the FLAC header");
     let si_back = fr.streaminfo();
-    assert_eq!(si_back.md5sum, si.md5);
+    assert_eq!(Some(si_back.md5sum), si.md5);
     assert_eq!(si_back.channels, si.channels.bits());
 }
 

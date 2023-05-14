@@ -28,7 +28,7 @@ pub trait StreamInfoWriteExt: Sized {
 
 impl StreamInfoWriteExt for StreamInfo {
     fn with_md5(mut self, md5sum: [u8; 16]) -> Self {
-        self.md5 = md5sum;
+        self.md5 = Some(md5sum);
         self
     }
 
@@ -79,6 +79,6 @@ pub(crate) fn write_streaminfo<S: Write>(
 
     to.write_u32::<BigEndian>((samples & 0xFFFF_FFFF).truncate())?;
 
-    to.write_all(&info.md5)?;
+    to.write_all(&info.md5.expect("md5 sum of input streaminfo packet"))?;
     Ok(())
 }

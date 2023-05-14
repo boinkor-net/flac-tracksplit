@@ -14,8 +14,9 @@ maintenance = { status = "passively-maintained" }
 
 [dependencies]
 anyhow = "1.0.52"
+crc = "2.1.0"
 int-conv = "0.1.4"
 metaflac = "0.2.5"
-symphonia-bundle-flac = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
-symphonia-core = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
-symphonia-utils-xiph = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
+symphonia-bundle-flac = "0.5.2"
+symphonia-core = "0.5.2"
+symphonia-utils-xiph = "0.5.2"

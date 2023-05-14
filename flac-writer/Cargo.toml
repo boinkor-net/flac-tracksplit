@@ -18,9 +18,9 @@ claxon = "0.4.3"
 int-conv = "0.1.4"
 itertools = "0.10.3"
 num = "0.4.0"
-symphonia-bundle-flac = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
-symphonia-core = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
-symphonia-utils-xiph = { git = "https://github.com/antifuchs/Symphonia.git", branch = "debug-trait" }
+symphonia-bundle-flac = "0.5.2"
+symphonia-core = "0.5.2"
+symphonia-utils-xiph = "0.5.2"
 thiserror = "1.0.30"
 
 [dev-dependencies]
