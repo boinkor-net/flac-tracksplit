@@ -18,12 +18,31 @@ use symphonia_core::{
     io::MediaSourceStream,
     meta::{Tag, Value, Visual},
 };
+use tracing::{debug, info, instrument};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 fn main() {
+    // Setup logging:
+    let indicatif_layer = tracing_indicatif::IndicatifLayer::new();
+    let filter = EnvFilter::builder()
+        .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
+        .from_env_lossy();
+    let writer = indicatif_layer.get_stderr_writer();
+    let app_log_layer = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .compact()
+        .with_writer(writer.clone());
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(app_log_layer)
+        .with(indicatif_layer)
+        .init();
+
     let file = File::open("test.flac").expect("opening test.flac");
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut reader = FlacReader::try_new(mss, &Default::default()).expect("creating flac reader");
-    // println!("tracks: {:?}", reader.tracks());
+    debug!("tracks: {:?}", reader.tracks());
     let track = reader.default_track().expect("default track");
     let data = match &track.codec_params.extra_data {
         Some(it) => it,
@@ -62,13 +81,7 @@ fn main() {
             let visuals = current_metadata.visuals();
             Track::from_tags(&info, cue, end_ts, &tags, &visuals)
         };
-        println!(
-            "\ntrack {}: {:?} ({} to {})",
-            track.number,
-            track.pathname(),
-            track.start_ts,
-            track.end_ts
-        );
+        info!(number = track.number, pathname = ?track.pathname(), start_ts = track.start_ts, end_ts = track.end_ts);
         let path = track.pathname();
         if let Some(parent) = path.parent() {
             create_dir_all(parent).expect("creating album dir");
@@ -198,6 +211,7 @@ impl Track {
         buf
     }
 
+    #[instrument(skip(self, to), fields(number = self.number, path = ?self.pathname()), err)]
     fn write_metadata<S: Write>(&self, mut to: S) -> anyhow::Result<()> {
         to.write_all(b"fLaC")?;
         let comment = VorbisComment {
@@ -239,6 +253,7 @@ impl Track {
         Ok(())
     }
 
+    #[instrument(skip(self, from, to), fields(number = self.number, path = ?self.pathname()), err)]
     fn write_audio<S: Write>(&self, from: &mut FlacReader, mut to: S) -> anyhow::Result<()> {
         // TODO: Maybe seek. Currently, this is only called in sequence, so no need to do that.
         let mut last_end: u64 = 0;
@@ -251,7 +266,7 @@ impl Track {
             let mut buf = symphonia_core::io::BufReader::new(&packet.buf()[4..14]);
             let (orig_sample_offset, sample_offset_len) = utf8_decode_be_u64(&mut buf)?;
             if first_sample_offset.is_none() {
-                println!("first sample offset: {}", orig_sample_offset);
+                info!(orig_sample_offset, "first sample offset");
                 first_sample_offset.replace(orig_sample_offset);
             }
             let sample_offset = orig_sample_offset - first_sample_offset.unwrap();
@@ -341,12 +356,12 @@ fn utf8_encode_be_u64(input: u64) -> anyhow::Result<Vec<u8>> {
         (start_mask.count_ones() - 1) * 6 + (start_mask.count_zeros() - 1)
     );
     let len: usize = start_mask.count_ones() as usize;
-    // println!(
-    //     "allocating a vec {:?} for mask {:b} for {} zeros",
-    //     len,
-    //     start_mask,
-    //     input.leading_zeros()
-    // );
+    debug!(
+        len,
+        start_mask,
+        leading_zeros = input.leading_zeros(),
+        "allocating a vec for mask",
+    );
     let mut val = vec![0; len];
     let mut posn = len - 1;
     while posn > 0 {
@@ -408,7 +423,7 @@ mod test {
                 decoded.0,
                 input
             );
-            println!("yay: {}", input);
+            info!("yay: {}", input);
         }
     }
 }
