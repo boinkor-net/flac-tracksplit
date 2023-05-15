@@ -256,7 +256,7 @@ impl Track {
             }
             let sample_offset = orig_sample_offset - first_sample_offset.unwrap();
 
-            let ts = packet.pts();
+            let ts = packet.ts;
             assert!(
                 ts >= self.start_ts,
                 "Packet timestamp {:?} is not >= this track's start ts {:?}",
@@ -267,8 +267,8 @@ impl Track {
             updated_buf.extend(utf8_encode_be_u64(sample_offset)?);
             updated_buf.extend(&packet.buf()[(4 + sample_offset_len as usize)..packet.buf().len()]);
             to.write_all(&updated_buf)?;
-            last_end = ts + packet.duration();
-            if ts + packet.duration() >= self.end_ts {
+            last_end = ts + packet.dur;
+            if ts + packet.dur >= self.end_ts {
                 return Ok(());
             }
         }
