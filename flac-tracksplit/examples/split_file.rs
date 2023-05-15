@@ -1,9 +1,11 @@
 use anyhow::Context;
+use crc::{Algorithm, Crc};
 use int_conv::Truncate;
 use metaflac::{
     block::{Picture, PictureType, StreamInfo, VorbisComment},
     Block,
 };
+use more_asserts as ma;
 use std::{
     borrow::Cow,
     fs::{create_dir_all, File},
@@ -14,8 +16,9 @@ use std::{
 };
 use symphonia_bundle_flac::FlacReader;
 use symphonia_core::{
+    checksum::Crc8Ccitt,
     formats::{Cue, FormatReader},
-    io::MediaSourceStream,
+    io::{MediaSourceStream, Monitor},
     meta::{Tag, Value, Visual},
 };
 use tracing::{debug, info, instrument};
@@ -263,8 +266,12 @@ impl Track {
             let packet = from
                 .next_packet()
                 .with_context(|| format!("last end: {:?} vs {:?}", last_end, self.end_ts))?;
-            let mut buf = symphonia_core::io::BufReader::new(&packet.buf()[4..14]);
-            let (orig_sample_offset, sample_offset_len) = utf8_decode_be_u64(&mut buf)?;
+
+            // fixup sample numbers: First, we read the initial sample
+            // offset; then we replace it with a number that's rooted
+            // in 0.
+            let mut buf = symphonia_core::io::BufReader::new(&packet.buf()[4..]);
+            let (orig_sample_offset, _) = utf8_decode_be_u64(&mut buf)?;
             if first_sample_offset.is_none() {
                 info!(orig_sample_offset, "first sample offset");
                 first_sample_offset.replace(orig_sample_offset);
@@ -272,23 +279,58 @@ impl Track {
             let sample_offset = orig_sample_offset - first_sample_offset.unwrap();
 
             let ts = packet.ts;
-            assert!(
-                ts >= self.start_ts,
-                "Packet timestamp {:?} is not >= this track's start ts {:?}",
+            ma::assert_ge!(
                 ts,
-                self.start_ts
+                self.start_ts,
+                "Packet timestamp is not >= this track's start ts. Potential bug exposed by the previous track.",
             );
+            // let old_checksum = packet.buf()[packet.buf().len() - 1];
+            // let new_checksum = crc.checksum(&packet.buf()[..(packet.buf().len() - 2)]);
+            // debug_assert_eq!(
+            //     old_checksum, new_checksum,
+            //     "crc old: 0x{:x} new: 0x{:x}, sample offset: {}",
+            //     old_checksum, new_checksum, sample_offset
+            // );
+
             let mut updated_buf = packet.buf()[0..4].to_owned();
             updated_buf.extend(utf8_encode_be_u64(sample_offset)?);
-            updated_buf.extend(&packet.buf()[(4 + sample_offset_len as usize)..packet.buf().len()]);
+            updated_buf.extend(buf.read_buf_bytes_available_ref()); // remaining bytes after sample offset
+
+            if Some(orig_sample_offset) == first_sample_offset {
+                info!(
+                    theirs = ?&packet.buf()[4..14],
+                    mine = ?&updated_buf[4..14],
+                    "sample offset matches"
+                );
+            }
+
+            // let crc_offset = updated_buf.len() - 1;
+            // let old_checksum = updated_buf[crc_offset];
+            // updated_buf[crc_offset] = crc.checksum(&updated_buf[..crc_offset]);
+            // info!(
+            //     "crc old: {:x} new: {:x}",
+            //     old_checksum, updated_buf[crc_offset]
+            // );
+
             to.write_all(&updated_buf)?;
+
             last_end = ts + packet.dur;
-            if ts + packet.dur >= self.end_ts {
+            if last_end >= self.end_ts {
                 return Ok(());
             }
         }
     }
 }
+
+const CRC_8_FLAC: Algorithm<u8> = Algorithm {
+    poly: 0x17,
+    init: 0x0,
+    refin: false,
+    refout: false,
+    xorout: 0x0,
+    check: 0x0,
+    residue: 0x0,
+};
 
 /// Decodes a big-endian unsigned integer encoded via extended UTF8. In this context, extended UTF8
 /// simply means the encoded UTF8 value may be up to 7 bytes for a maximum integer bit width of
@@ -410,7 +452,7 @@ mod test {
 
     #[test]
     fn test_encoding() {
-        let inputs: &[u64] = &[0x85, 0x863, 0x18427, 0xf88204, 0x04];
+        let inputs: &[u64] = &[0x85, 0x863, 0x18427, 0xf88204, 0x04, 8790];
         for input in inputs {
             let encoded = utf8_encode_be_u64(*input).expect("encoding");
             let mut buf = BufReader::new(&encoded);
