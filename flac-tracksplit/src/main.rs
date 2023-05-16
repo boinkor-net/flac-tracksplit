@@ -1,6 +1,20 @@
+use std::path::PathBuf;
+
+use clap::Parser;
 use flac_tracksplit::split_one_file;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+
+#[derive(Debug, Parser)]
+#[command(author, version, about, long_about=None)]
+struct Args {
+    /// Pathnames of .flac files (with embedded CUE sheets) to split into tracks.
+    paths: Vec<PathBuf>,
+
+    /// Base path into which to sort resulting per-track FLAC files
+    #[arg(long, default_value = "./")]
+    base_path: PathBuf,
+}
 
 fn main() {
     // Setup logging:
@@ -18,5 +32,10 @@ fn main() {
         .with(app_log_layer)
         .with(indicatif_layer)
         .init();
-    split_one_file("test.flac", "../").expect("Correctly split");
+
+    let args = Args::parse();
+    let base_path = args.base_path.as_path();
+    for path in args.paths {
+        split_one_file(path, base_path).expect("Correctly split");
+    }
 }

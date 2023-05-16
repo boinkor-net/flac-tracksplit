@@ -9,11 +9,16 @@ readme = "README.md"
 description = "Split FLAC+CUE (embedded) into multiple tracks"
 documentation = "https://docs.rs/flac-tracksplit"
 
+[[bin]]
+name = "flac-tracksplit"
+path = "src/main.rs"
+
 [badges]
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
 anyhow = "1.0.52"
+clap = { version = "4.2.7", features = ["derive"] }
 crc = "2.1.0"
 int-conv = "0.1.4"
 metaflac = "0.2.5"

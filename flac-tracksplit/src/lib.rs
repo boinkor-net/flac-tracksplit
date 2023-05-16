@@ -7,6 +7,7 @@ use metaflac::{
 use more_asserts as ma;
 use std::{
     borrow::Cow,
+    fmt::Debug,
     fs::{create_dir_all, File},
     io::Write,
     num::NonZeroU32,
@@ -22,7 +23,11 @@ use symphonia_core::{
 };
 use tracing::{debug, info, instrument};
 
-pub fn split_one_file<P: AsRef<Path>>(input_path: P, base_path: P) -> anyhow::Result<Vec<PathBuf>> {
+#[instrument(skip(base_path), err)]
+pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
+    input_path: P,
+    base_path: B,
+) -> anyhow::Result<Vec<PathBuf>> {
     let file = File::open(input_path).expect("opening test.flac");
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut reader = FlacReader::try_new(mss, &Default::default()).expect("creating flac reader");
