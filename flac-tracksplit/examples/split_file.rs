@@ -1,6 +1,5 @@
 use anyhow::Context;
-use crc::{Algorithm, Crc};
-use int_conv::Truncate;
+use flac_tracksplit::OffsetFrame;
 use metaflac::{
     block::{Picture, PictureType, StreamInfo, VorbisComment},
     Block,
@@ -16,9 +15,8 @@ use std::{
 };
 use symphonia_bundle_flac::FlacReader;
 use symphonia_core::{
-    checksum::Crc8Ccitt,
     formats::{Cue, FormatReader},
-    io::{MediaSourceStream, Monitor},
+    io::MediaSourceStream,
     meta::{Tag, Value, Visual},
 };
 use tracing::{debug, info, instrument};
@@ -251,221 +249,44 @@ impl Track {
         ];
         let mut blocks = headers.into_iter().chain(pictures.into_iter()).peekable();
         while let Some(block) = blocks.next() {
-            block.write_to(blocks.peek().is_none(), &mut to)?;
+            let is_last = blocks.peek().is_none();
+            block.write_to(is_last, &mut to)?;
         }
         Ok(())
     }
 
     #[instrument(skip(self, from, to), fields(number = self.number, path = ?self.pathname()), err)]
     fn write_audio<S: Write>(&self, from: &mut FlacReader, mut to: S) -> anyhow::Result<()> {
-        // TODO: Maybe seek. Currently, this is only called in sequence, so no need to do that.
+        // TODO: Seek to the track start. Currently, this is only called in sequence, so no need to do that.
         let mut last_end: u64 = 0;
-        let mut first_sample_offset: Option<u64> = None;
+        let mut frame = OffsetFrame::default();
         loop {
-            // TODO: the "end" logic below is wrong.
             let packet = from
                 .next_packet()
                 .with_context(|| format!("last end: {:?} vs {:?}", last_end, self.end_ts))?;
 
-            // fixup sample numbers: First, we read the initial sample
-            // offset; then we replace it with a number that's rooted
-            // in 0.
-            let mut buf = symphonia_core::io::BufReader::new(&packet.buf()[4..]);
-            let (orig_sample_offset, _) = utf8_decode_be_u64(&mut buf)?;
-            if first_sample_offset.is_none() {
-                info!(orig_sample_offset, "first sample offset");
-                first_sample_offset.replace(orig_sample_offset);
-            }
-            let sample_offset = orig_sample_offset - first_sample_offset.unwrap();
-
             let ts = packet.ts;
+            let dur = packet.dur;
             ma::assert_ge!(
                 ts,
                 self.start_ts,
                 "Packet timestamp is not >= this track's start ts. Potential bug exposed by the previous track.",
             );
-            // let old_checksum = packet.buf()[packet.buf().len() - 1];
-            // let new_checksum = crc.checksum(&packet.buf()[..(packet.buf().len() - 2)]);
-            // debug_assert_eq!(
-            //     old_checksum, new_checksum,
-            //     "crc old: 0x{:x} new: 0x{:x}, sample offset: {}",
-            //     old_checksum, new_checksum, sample_offset
-            // );
 
-            let mut updated_buf = packet.buf()[0..4].to_owned();
-            updated_buf.extend(utf8_encode_be_u64(sample_offset)?);
-            updated_buf.extend(buf.read_buf_bytes_available_ref()); // remaining bytes after sample offset
+            // Adjust the frame header:
+            // * Adjust sample/frame number such that each track starts at frame/sample 0. This should fix seeking.
+            // * Recompute the 8-bit header CRC
+            // * Recompute the 16-bit footer CRC
 
-            if Some(orig_sample_offset) == first_sample_offset {
-                info!(
-                    theirs = ?&packet.buf()[4..14],
-                    mine = ?&updated_buf[4..14],
-                    "sample offset matches"
-                );
-            }
-
-            // let crc_offset = updated_buf.len() - 1;
-            // let old_checksum = updated_buf[crc_offset];
-            // updated_buf[crc_offset] = crc.checksum(&updated_buf[..crc_offset]);
-            // info!(
-            //     "crc old: {:x} new: {:x}",
-            //     old_checksum, updated_buf[crc_offset]
-            // );
-
+            let (updated_buf, _header_matches, _footer_matches) = frame
+                .process(packet)
+                .with_context(|| format!("processing frame at ts {}", ts))?;
             to.write_all(&updated_buf)?;
 
-            last_end = ts + packet.dur;
+            last_end = ts + dur;
             if last_end >= self.end_ts {
                 return Ok(());
             }
-        }
-    }
-}
-
-const CRC_8_FLAC: Algorithm<u8> = Algorithm {
-    poly: 0x17,
-    init: 0x0,
-    refin: false,
-    refout: false,
-    xorout: 0x0,
-    check: 0x0,
-    residue: 0x0,
-};
-
-/// Decodes a big-endian unsigned integer encoded via extended UTF8. In this context, extended UTF8
-/// simply means the encoded UTF8 value may be up to 7 bytes for a maximum integer bit width of
-/// 36-bits. Returns the number of bytes that contain the encoded number as the second value.
-///
-// Taken from symphonia.
-fn utf8_decode_be_u64<B: symphonia_core::io::ReadBytes>(src: &mut B) -> anyhow::Result<(u64, u32)> {
-    // Read the first byte of the UTF8 encoded integer.
-    let mut state = u64::from(src.read_u8()?);
-
-    // UTF8 prefixes 1s followed by a 0 to indicate the total number of bytes within the multi-byte
-    // sequence. Using ranges, determine the mask that will overlap the data bits within the first
-    // byte of the sequence. For values 0-128, return the value immediately. If the value falls out
-    // of range return None as this is either not the start of a UTF8 sequence or the prefix is
-    // incorrect.
-    let mask: u8 = match state {
-        0x00..=0x7f => return Ok((state, 1)),
-        0xc0..=0xdf => 0x1f,
-        0xe0..=0xef => 0x0f,
-        0xf0..=0xf7 => 0x07,
-        0xf8..=0xfb => 0x03,
-        0xfc..=0xfd => 0x01,
-        0xfe => 0x00,
-        _ => anyhow::bail!("invalid utf-8 encoded sample/frame number"),
-    };
-
-    // Obtain the data bits from the first byte by using the data mask.
-    state &= u64::from(mask);
-
-    // Read the remaining bytes within the UTF8 sequence. Since the mask 0s out the UTF8 prefix
-    // of 1s which indicate the length of the multi-byte sequence in bytes, plus an additional 0
-    // bit, the number of remaining bytes to read is the number of zeros in the mask minus 2.
-    // To avoid extra computation, simply loop from 2 to the number of zeros.
-    for _i in 2..mask.leading_zeros() {
-        // Each subsequent byte after the first in UTF8 is prefixed with 0b10xx_xxxx, therefore
-        // only 6 bits are useful. Append these six bits to the result by shifting the result left
-        // by 6 bit positions, and appending the next subsequent byte with the first two high-order
-        // bits masked out.
-        state = (state << 6) | u64::from(src.read_u8()? & 0x3f);
-
-        // TODO: Validation? Invalid if the byte is greater than 0x3f.
-    }
-
-    Ok((state, mask.leading_zeros() - 1))
-}
-
-fn utf8_encode_be_u64(input: u64) -> anyhow::Result<Vec<u8>> {
-    let mut number = input;
-    let start_mask: u8 = match number.leading_zeros() {
-        57..=64 => return Ok(vec![number.truncate()]),
-        53..=56 => 0b1100_0000,
-        48..=52 => 0b1110_0000,
-        44..=47 => 0b1111_0000,
-        39..=43 => 0b1111_1000,
-        34..=38 => 0b1111_1100,
-        29..=33 => 0b1111_1110,
-        00..=28 | 65..=u32::MAX => unreachable!("can't encode more than 7 leading bits"),
-    };
-    debug_assert!(
-        64 - input.leading_zeros()
-            <= (start_mask.count_ones() - 1) * 6 + (start_mask.count_zeros() - 1),
-        "Number with {} set bits ({:b}) to be represented in {} bits",
-        64 - input.leading_zeros(),
-        input,
-        (start_mask.count_ones() - 1) * 6 + (start_mask.count_zeros() - 1)
-    );
-    let len: usize = start_mask.count_ones() as usize;
-    debug!(
-        len,
-        start_mask,
-        leading_zeros = input.leading_zeros(),
-        "allocating a vec for mask",
-    );
-    let mut val = vec![0; len];
-    let mut posn = len - 1;
-    while posn > 0 {
-        let byte: u8 = number.truncate();
-        val[posn] = (byte & 0x3f) | 0b10000000;
-        number >>= 6;
-        posn -= 1;
-    }
-    let byte: u8 = number.truncate();
-    val[0] = byte | start_mask;
-    debug_assert_eq!(
-        0,
-        byte >> (start_mask.count_zeros() - 1) as usize,
-        "Should have 0 set bits left"
-    );
-    Ok(val)
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use std::fmt;
-    use symphonia_core::io::BufReader;
-
-    struct V<'a>(&'a [u8]);
-
-    impl<'a> fmt::Binary for V<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            // extract the value using tuple idexing
-            // and create reference to 'vec'
-            let vec = &self.0;
-
-            // @count -> the index of the value,
-            // @n     -> the value
-            for (count, n) in vec.iter().enumerate() {
-                if count != 0 {
-                    write!(f, " ")?;
-                }
-
-                write!(f, "{:b}", n)?;
-            }
-
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_encoding() {
-        let inputs: &[u64] = &[0x85, 0x863, 0x18427, 0xf88204, 0x04, 8790];
-        for input in inputs {
-            let encoded = utf8_encode_be_u64(*input).expect("encoding");
-            let mut buf = BufReader::new(&encoded);
-            let decoded =
-                utf8_decode_be_u64(&mut buf).expect(&format!("decoding {:b}", V(&encoded)));
-            assert_eq!(
-                (*input, encoded.len() as u32),
-                decoded,
-                "received:\n{:#064b} but wanted:\n{:#064b}",
-                decoded.0,
-                input
-            );
-            info!("yay: {}", input);
         }
     }
 }
