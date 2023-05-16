@@ -18,5 +18,5 @@ fn main() {
         .with(app_log_layer)
         .with(indicatif_layer)
         .init();
-    split_one_file("test.flac").expect("Correctly split");
+    split_one_file("test.flac", "../").expect("Correctly split");
 }

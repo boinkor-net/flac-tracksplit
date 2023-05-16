@@ -22,7 +22,7 @@ use symphonia_core::{
 };
 use tracing::{debug, info, instrument};
 
-pub fn split_one_file<P: AsRef<Path>>(input_path: P) -> anyhow::Result<Vec<PathBuf>> {
+pub fn split_one_file<P: AsRef<Path>>(input_path: P, base_path: P) -> anyhow::Result<Vec<PathBuf>> {
     let file = File::open(input_path).expect("opening test.flac");
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut reader = FlacReader::try_new(mss, &Default::default()).expect("creating flac reader");
@@ -67,7 +67,7 @@ pub fn split_one_file<P: AsRef<Path>>(input_path: P) -> anyhow::Result<Vec<PathB
             Track::from_tags(&info, cue, end_ts, &tags, &visuals)
         };
         info!(number = track.number, pathname = ?track.pathname(), start_ts = track.start_ts, end_ts = track.end_ts);
-        let pathbuf = track.pathname();
+        let pathbuf = base_path.as_ref().join(track.pathname());
         let path = &pathbuf;
         if let Some(parent) = path.parent() {
             create_dir_all(parent).context("creating album dir")?;
