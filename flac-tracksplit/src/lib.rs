@@ -262,6 +262,10 @@ impl Track {
     #[instrument(skip(self, from, to), fields(number = self.number, path = ?self.pathname()), err)]
     pub fn write_audio<S: Write>(&self, from: &mut FlacReader, mut to: S) -> anyhow::Result<()> {
         // TODO: Seek to the track start. Currently, this is only called in sequence, so no need to do that.
+
+        // TODO: The last frames need to be checked whether their
+        // sample count is the correct number (and truncated),
+        // otherwise `flac -t` complains.
         let mut last_end: u64 = 0;
         let mut frame = OffsetFrame::default();
         loop {
