@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
 use clap::Parser;
 use flac_tracksplit::split_one_file;
+use rayon::prelude::*;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
@@ -35,7 +37,12 @@ fn main() {
 
     let args = Args::parse();
     let base_path = args.base_path.as_path();
-    for path in args.paths {
-        split_one_file(path, base_path).expect("Correctly split");
-    }
+    args.paths
+        .into_par_iter()
+        .try_for_each(|path| {
+            split_one_file(&path, base_path)
+                .map(|_| ())
+                .with_context(|| format!("When splitting {:?}", path))
+        })
+        .expect("Error splitting the given files");
 }
