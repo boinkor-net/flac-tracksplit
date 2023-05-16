@@ -1,5 +1,4 @@
 [workspace]
 members = [
-  "flac-writer",
   "flac-tracksplit"
 ]
