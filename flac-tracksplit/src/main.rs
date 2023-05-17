@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
+use bytesize::ByteSize;
 use clap::Parser;
 use flac_tracksplit::split_one_file;
 use rayon::prelude::*;
@@ -19,6 +20,12 @@ struct Args {
     /// OUTPUT_DIR/<Album Artist>/<Release year> - <Album name>/<Trackno>.<Track title>.flac
     #[arg(long, default_value = "./")]
     output_dir: PathBuf,
+
+    /// Number of 0-byte padding to add to the end of the metadata
+    /// block. More padding allows larger additions to metadata
+    /// without having to rewrite the whole file.
+    #[arg(long, default_value = "2kB")]
+    metadata_padding: ByteSize,
 }
 
 fn main() {
@@ -40,10 +47,15 @@ fn main() {
 
     let args = Args::parse();
     let base_path = args.output_dir.as_path();
+    let metadata_padding: u32 = args
+        .metadata_padding
+        .as_u64()
+        .try_into()
+        .expect("metadata padding fits into a 32-bit unsigned int");
     args.paths
         .into_par_iter()
         .try_for_each(|path| {
-            split_one_file(&path, base_path)
+            split_one_file(&path, base_path, metadata_padding)
                 .map(|_| ())
                 .with_context(|| format!("When splitting {:?}", path))
         })

@@ -23,10 +23,11 @@ use symphonia_core::{
 };
 use tracing::{debug, info, instrument};
 
-#[instrument(skip(base_path), err)]
+#[instrument(skip(base_path, metadata_padding), err)]
 pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     input_path: P,
     base_path: B,
+    metadata_padding: u32,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let file = File::open(&input_path).with_context(|| format!("opening {:?}", input_path))?;
     let file_length = file.metadata().context("file metadata")?.len();
@@ -86,7 +87,7 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
             .with_context(|| format!("buffering track {:?} audio", path))?;
 
         track
-            .write_metadata(sample_count, &mut f)
+            .write_metadata(sample_count, metadata_padding, &mut f)
             .with_context(|| format!("writing track {:?}", path))?;
         f.write_all(&audio_buffer)
             .with_context(|| format!("writing track {:?} audio", path))?;
@@ -231,7 +232,12 @@ impl Track {
     /// blocks - first STREAMINFO, then the remainder containing
     /// pictures and vorbis comments.
     #[instrument(skip(self, to), fields(number = self.number, path = ?self.pathname()), err)]
-    pub fn write_metadata<S: Write>(&self, total_samples: u64, mut to: S) -> anyhow::Result<()> {
+    pub fn write_metadata<S: Write>(
+        &self,
+        total_samples: u64,
+        metadata_padding: u32,
+        mut to: S,
+    ) -> anyhow::Result<()> {
         to.write_all(b"fLaC")?;
         let comment = VorbisComment {
             vendor_string: "flac-tracksplit".to_string(),
@@ -277,11 +283,14 @@ impl Track {
         }
         streaminfo.total_samples = total_samples;
         let headers = vec![Block::StreamInfo(streaminfo), Block::VorbisComment(comment)];
-        let mut blocks = headers.into_iter().chain(pictures.into_iter()).peekable();
-        while let Some(block) = blocks.next() {
-            let is_last = blocks.peek().is_none();
-            block.write_to(is_last, &mut to)?;
+        for block in headers.into_iter().chain(pictures.into_iter()) {
+            block
+                .write_to(false, &mut to)
+                .with_context(|| format!("writing block {:?}", block))?;
         }
+        Block::Padding(metadata_padding)
+            .write_to(true, &mut to)
+            .context("writing padding")?;
         Ok(())
     }
 
