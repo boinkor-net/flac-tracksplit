@@ -29,6 +29,7 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     base_path: B,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let file = File::open(input_path).expect("opening test.flac");
+    let file_length = file.metadata().context("file metadata")?.len();
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut reader = FlacReader::try_new(mss, &Default::default()).expect("creating flac reader");
     debug!("tracks: {:?}", reader.tracks());
@@ -52,7 +53,9 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
 
     let mut track_paths = vec![];
     let mut cue_iter = cues.iter().peekable();
+    let mut audio_buffer = Vec::with_capacity(file_length.try_into().unwrap());
     while let Some(cue) = cue_iter.next() {
+        audio_buffer.clear();
         let next = cue_iter.peek();
         let end_ts = match next {
             None => last_ts, // no lead-out, fudge it.
@@ -78,11 +81,14 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
             create_dir_all(parent).context("creating album dir")?;
         }
         let mut f = File::create(path).unwrap();
+        let sample_count = track
+            .write_audio(&mut reader, &mut audio_buffer)
+            .with_context(|| format!("buffering track {:?} audio", path))?;
+
         track
-            .write_metadata(&mut f)
+            .write_metadata(sample_count, &mut f)
             .with_context(|| format!("writing track {:?}", path))?;
-        track
-            .write_audio(&mut reader, &mut f)
+        f.write_all(&audio_buffer)
             .with_context(|| format!("writing track {:?} audio", path))?;
         track_paths.push(pathbuf);
     }
@@ -214,10 +220,10 @@ impl Track {
     /// blocks - first STREAMINFO, then the remainder containing
     /// pictures and vorbis comments.
     #[instrument(skip(self, to), fields(number = self.number, path = ?self.pathname()), err)]
-    pub fn write_metadata<S: Write>(&self, mut to: S) -> anyhow::Result<()> {
+    pub fn write_metadata<S: Write>(&self, total_samples: u64, mut to: S) -> anyhow::Result<()> {
         to.write_all(b"fLaC")?;
         let comment = VorbisComment {
-            vendor_string: "asf's silly track splitter".to_string(),
+            vendor_string: "flac-tracksplit".to_string(),
             comments: self
                 .tags
                 .iter()
@@ -244,10 +250,9 @@ impl Track {
                 })
             })
             .collect();
-        let headers = vec![
-            Block::StreamInfo(self.streaminfo.clone()),
-            Block::VorbisComment(comment),
-        ];
+        let mut streaminfo = self.streaminfo.clone();
+        streaminfo.total_samples = total_samples;
+        let headers = vec![Block::StreamInfo(streaminfo), Block::VorbisComment(comment)];
         let mut blocks = headers.into_iter().chain(pictures.into_iter()).peekable();
         while let Some(block) = blocks.next() {
             let is_last = blocks.peek().is_none();
@@ -258,14 +263,13 @@ impl Track {
 
     /// Write a STREAM's
     /// [FRAME](https://xiph.org/flac/format.html#frame) sequence,
-    /// containing compressed audio samples.
+    /// containing compressed audio samples. Returns the number of samples actually processed.
     #[instrument(skip(self, from, to), fields(number = self.number, path = ?self.pathname()), err)]
-    pub fn write_audio<S: Write>(&self, from: &mut FlacReader, mut to: S) -> anyhow::Result<()> {
-        // TODO: Seek to the track start. Currently, this is only called in sequence, so no need to do that.
+    pub fn write_audio<S: Write>(&self, from: &mut FlacReader, mut to: S) -> anyhow::Result<u64> {
+        // TODO: Seek to the track start. Currently, this is only
+        // called in sequence (we're parallel per-file), so no need to
+        // do that rn, but it would be nice!
 
-        // TODO: The last frames need to be checked whether their
-        // sample count is the correct number (and truncated),
-        // otherwise `flac -t` complains.
         let mut last_end: u64 = 0;
         let mut frame = OffsetFrame::default();
         loop {
@@ -286,14 +290,14 @@ impl Track {
             // * Recompute the 8-bit header CRC
             // * Recompute the 16-bit footer CRC
 
-            let (updated_buf, _header_matches, _footer_matches) = frame
+            let updated_buf = frame
                 .process(packet)
                 .with_context(|| format!("processing frame at ts {}", ts))?;
             to.write_all(&updated_buf)?;
 
             last_end = ts + dur;
             if last_end >= self.end_ts {
-                return Ok(());
+                return Ok(frame.samples_processed);
             }
         }
     }
@@ -308,6 +312,7 @@ impl Track {
 #[derive(Default)]
 pub struct OffsetFrame {
     initial_offset: Option<u64>,
+    samples_processed: u64,
 }
 
 impl OffsetFrame {
@@ -315,10 +320,8 @@ impl OffsetFrame {
     /// and CRC checksums, and emits that frame in an updated byte
     /// buffer.
     ///
-    /// Returns a byte buffer containing the updated frame and boolean
-    /// flags indicating whether the header and footer CRCs match what
-    /// was there before.
-    pub fn process(&mut self, packet: Packet) -> anyhow::Result<(Vec<u8>, bool, bool)> {
+    /// Returns a byte buffer containing the updated frame.
+    pub fn process(&mut self, packet: Packet) -> anyhow::Result<Vec<u8>> {
         let mut frame_reader = packet.as_buf_reader();
         let mut header_crc = Crc8Ccitt::new(0);
         let mut footer_crc = Crc16Ansi::new(0);
@@ -356,13 +359,14 @@ impl OffsetFrame {
         // Now, some gymnastics to read the sample rate & block size
         // if necessary (behavior dictated by the appropriate bits in
         // the `desc` fields).
-        match block_size_enc & 0b1111 {
+        let block_samples: u64 = match block_size_enc & 0b1111 {
             0b0110 => {
                 // block size is given in the next 8 bits:
                 let bs_u8 = frame_reader.read_u8().context("8bit block size")?;
                 header_crc.process_byte(bs_u8);
                 footer_crc.process_byte(bs_u8);
                 frame_out.write_all(&[bs_u8])?;
+                bs_u8.into()
             }
             0b0111 => {
                 // block size given in the next 16 bits:
@@ -371,11 +375,13 @@ impl OffsetFrame {
                 header_crc.process_double_bytes(bs_u8);
                 footer_crc.process_double_bytes(bs_u8);
                 frame_out.write_all(&bs_u8)?;
+                bs.into()
             }
-            _ => {
-                // No bits used for the field otherwise
-            }
-        }
+            0b0001 => 192,
+            0b0000 => bail!("reserved sample count"),
+            b if b & 0b1000 != 0 => 256 * 2u64.pow((b & 0b1111) - 8),
+            b => 576 * 2u64.pow((b & 0b111) - 2),
+        };
         match sample_rate_enc & 0b1111 {
             0b1100 => {
                 // sample rate is given in the next 8 bits:
@@ -399,7 +405,7 @@ impl OffsetFrame {
         }
 
         // What follows is the header CRC. We write out the one computed above:
-        let original_header_crc = frame_reader.read_u8().context("reading header CRC")?;
+        let _original_header_crc = frame_reader.read_u8().context("reading header CRC")?;
         let my_header_crc = header_crc.crc();
         footer_crc.process_byte(my_header_crc);
         frame_out.write_all(&[my_header_crc])?;
@@ -407,20 +413,14 @@ impl OffsetFrame {
         // Next, the subframes; we do not touch them, but we do rewrite the footer CRC:
         let remainder = frame_reader.read_buf_bytes_available_ref();
         let subframes = &remainder[..remainder.len() - 2];
-        let original_footer_crc_u8 = &remainder[remainder.len() - 2..];
-        let original_footer_crc = u16::from_be_bytes(original_footer_crc_u8.try_into().unwrap());
         footer_crc.process_buf_bytes(subframes);
         frame_out.write_all(subframes)?;
 
         let my_footer_crc = footer_crc.crc();
         let my_footer_crc_u8 = my_footer_crc.to_be_bytes();
         frame_out.write_all(&my_footer_crc_u8)?;
-
-        Ok((
-            frame_out,
-            original_header_crc == my_header_crc,
-            original_footer_crc == my_footer_crc,
-        ))
+        self.samples_processed += block_samples;
+        Ok(frame_out)
     }
 }
 
