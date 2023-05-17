@@ -581,7 +581,7 @@ mod test {
         fn test_encoding(input in 0..(2u64.pow(35))) {
             let encoded = utf8_encode_be_u64(input).expect("encoding");
             let mut buf = BufReader::new(&encoded);
-            let decoded = utf8_decode_be_u64(&mut buf).expect(&format!("decoding {:b}", V(&encoded)));
+            let decoded = utf8_decode_be_u64(&mut buf).unwrap_or_else(|_| panic!("decoding {:b}", V(&encoded)));
             prop_assert_eq!((input, encoded.len() as u32), decoded,
                 "received:\n{:#064b} but wanted:\n{:#064b}",
                 decoded.0, input);
