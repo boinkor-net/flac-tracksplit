@@ -19,7 +19,7 @@ use symphonia_core::{
     checksum::{Crc16Ansi, Crc8Ccitt},
     formats::{Cue, FormatReader, Packet},
     io::{MediaSourceStream, Monitor, ReadBytes},
-    meta::{Tag, Value, Visual},
+    meta::{StandardVisualKey, Tag, Value, Visual},
 };
 use tracing::{debug, info, instrument};
 
@@ -258,7 +258,9 @@ impl Track {
             .iter()
             .map(|visual| {
                 Block::Picture(Picture {
-                    picture_type: PictureType::Other,
+                    picture_type: translate_visual_key(
+                        visual.usage.unwrap_or(StandardVisualKey::OtherIcon),
+                    ),
                     mime_type: visual.media_type.to_string(),
                     description: "".to_string(),
                     width: visual.dimensions.map(|s| s.width).unwrap_or(0),
@@ -339,6 +341,31 @@ impl Track {
                 return Ok(frame.samples_processed);
             }
         }
+    }
+}
+
+fn translate_visual_key(key: StandardVisualKey) -> PictureType {
+    use PictureType::*;
+    match key {
+        StandardVisualKey::FileIcon => Icon,
+        StandardVisualKey::OtherIcon => Other,
+        StandardVisualKey::FrontCover => CoverFront,
+        StandardVisualKey::BackCover => CoverBack,
+        StandardVisualKey::Leaflet => Leaflet,
+        StandardVisualKey::Media => Media,
+        StandardVisualKey::LeadArtistPerformerSoloist => LeadArtist,
+        StandardVisualKey::ArtistPerformer => Artist,
+        StandardVisualKey::Conductor => Conductor,
+        StandardVisualKey::BandOrchestra => Band,
+        StandardVisualKey::Composer => Composer,
+        StandardVisualKey::Lyricist => Lyricist,
+        StandardVisualKey::RecordingLocation => RecordingLocation,
+        StandardVisualKey::RecordingSession => DuringRecording,
+        StandardVisualKey::Performance => DuringPerformance,
+        StandardVisualKey::ScreenCapture => ScreenCapture,
+        StandardVisualKey::Illustration => Illustration,
+        StandardVisualKey::BandArtistLogo => BandLogo,
+        StandardVisualKey::PublisherStudioLogo => PublisherLogo,
     }
 }
 
