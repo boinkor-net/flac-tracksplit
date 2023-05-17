@@ -53,11 +53,16 @@ fn main() -> anyhow::Result<()> {
         .as_u64()
         .try_into()
         .context("--metadata-padding should fit into a 32-bit unsigned int")?;
-    if let Err(err) = args.paths.into_par_iter().try_for_each(|path| {
-        split_one_file(&path, base_path, metadata_padding)
-            .map(|_| ())
-            .with_context(|| format!("splitting {:?}", path))
-    }) {
+    if let Err(err) = args
+        .paths
+        .into_par_iter()
+        .panic_fuse()
+        .try_for_each(|path| {
+            split_one_file(&path, base_path, metadata_padding)
+                .map(|_| ())
+                .with_context(|| format!("splitting {:?}", path))
+        })
+    {
         error!(error = %err);
         Err(err)
     } else {
