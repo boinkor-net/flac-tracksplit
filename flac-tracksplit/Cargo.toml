@@ -17,7 +17,7 @@ path = "src/main.rs"
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-anyhow = "1.0.52"
+anyhow = "1.0.71"
 clap = { version = "4.2.7", features = ["derive"] }
 crc = "2.1.0"
 int-conv = "0.1.4"
