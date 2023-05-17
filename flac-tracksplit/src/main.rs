@@ -5,6 +5,7 @@ use bytesize::ByteSize;
 use clap::Parser;
 use flac_tracksplit::split_one_file;
 use rayon::prelude::*;
+use tracing::error;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
@@ -28,7 +29,7 @@ struct Args {
     metadata_padding: ByteSize,
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     // Setup logging:
     let indicatif_layer = tracing_indicatif::IndicatifLayer::new();
     let filter = EnvFilter::builder()
@@ -51,13 +52,15 @@ fn main() {
         .metadata_padding
         .as_u64()
         .try_into()
-        .expect("metadata padding fits into a 32-bit unsigned int");
-    args.paths
-        .into_par_iter()
-        .try_for_each(|path| {
-            split_one_file(&path, base_path, metadata_padding)
-                .map(|_| ())
-                .with_context(|| format!("When splitting {:?}", path))
-        })
-        .expect("Error splitting the given files");
+        .context("--metadata-padding should fit into a 32-bit unsigned int")?;
+    if let Err(err) = args.paths.into_par_iter().try_for_each(|path| {
+        split_one_file(&path, base_path, metadata_padding)
+            .map(|_| ())
+            .with_context(|| format!("splitting {:?}", path))
+    }) {
+        error!(error = %err);
+        Err(err.into())
+    } else {
+        Ok(())
+    }
 }
