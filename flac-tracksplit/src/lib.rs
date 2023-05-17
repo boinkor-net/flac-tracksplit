@@ -42,11 +42,15 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     let info = StreamInfo::from_bytes(data);
     let cues = reader.cues().to_vec();
     let time_base = track.codec_params.time_base.context("track time base")?;
-    assert_eq!(time_base.numer, 1, "Should be a fraction like 1/44000");
-    assert_eq!(
-        time_base.denom, info.sample_rate,
-        "Should have the sample rate as denom"
-    );
+    if time_base.numer != 1 {
+        bail!(
+            "track time_base numerator should be a fraction like 1/44000, instead {:?}",
+            time_base
+        );
+    }
+    if time_base.denom != info.sample_rate {
+        bail!("track time_base denominator ({:?}) should be the same as the overall streaminfo ({:?})", time_base, info.sample_rate);
+    }
     // since we're sure that the sample rate is an even denominator of
     // symphonia's TimeBase, we can assume that the time stamps are in
     // samples:
