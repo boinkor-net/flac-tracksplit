@@ -32,9 +32,10 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     let file = File::open(&input_path).with_context(|| format!("opening {:?}", input_path))?;
     let file_length = file.metadata().context("file metadata")?.len();
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut reader = FlacReader::try_new(mss, &Default::default()).expect("creating flac reader");
+    let mut reader =
+        FlacReader::try_new(mss, &Default::default()).context("could not create flac reader")?;
     debug!("tracks: {:?}", reader.tracks());
-    let track = reader.default_track().expect("default track");
+    let track = reader.default_track().context("no default track")?;
     let data = match &track.codec_params.extra_data {
         Some(it) => it,
         _ => bail!("Unclear track codec params - Not a flac file?"),
