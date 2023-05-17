@@ -75,7 +75,7 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
             let visuals = current_metadata.visuals();
             Track::from_tags(&info, cue, end_ts, tags, visuals)
         };
-        info!(number = track.number, output = ?track.pathname());
+        debug!(number = track.number, output = ?track.pathname(), "Track");
         let pathbuf = base_path.as_ref().join(track.pathname());
         let path = &pathbuf;
         if let Some(parent) = path.parent() {
@@ -93,6 +93,7 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
             .with_context(|| format!("writing track {:?} audio", path))?;
         track_paths.push(pathbuf);
     }
+    info!("Done with disc image");
     Ok(track_paths)
 }
 
