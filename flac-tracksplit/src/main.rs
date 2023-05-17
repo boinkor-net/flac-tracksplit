@@ -59,7 +59,7 @@ fn main() -> anyhow::Result<()> {
             .with_context(|| format!("splitting {:?}", path))
     }) {
         error!(error = %err);
-        Err(err.into())
+        Err(err)
     } else {
         Ok(())
     }
