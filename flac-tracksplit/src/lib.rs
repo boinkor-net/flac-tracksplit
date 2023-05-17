@@ -39,7 +39,7 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
         _ => bail!("Unclear track codec params - Not a flac file?"),
     };
     let info = StreamInfo::from_bytes(data);
-    let cues: Vec<Cue> = reader.cues().iter().cloned().collect();
+    let cues = reader.cues().to_vec();
     let time_base = track.codec_params.time_base.context("track time base")?;
     assert_eq!(time_base.numer, 1, "Should be a fraction like 1/44000");
     assert_eq!(
@@ -72,7 +72,7 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
             let current_metadata = metadata.current().context("track tags")?;
             let tags = current_metadata.tags();
             let visuals = current_metadata.visuals();
-            Track::from_tags(&info, cue, end_ts, &tags, &visuals)
+            Track::from_tags(&info, cue, end_ts, tags, visuals)
         };
         info!(number = track.number, output = ?track.pathname());
         let pathbuf = base_path.as_ref().join(track.pathname());
@@ -122,7 +122,7 @@ impl std::fmt::Debug for Track {
 
 impl Track {
     fn interesting_tag(name: &str) -> bool {
-        !name.ends_with("]") && name != "CUESHEET" && name != "LOG"
+        !name.ends_with(']') && name != "CUESHEET" && name != "LOG"
     }
 
     /// Create a [Track] from a file's embedded FLAC&vorbis comments and CUE sheet.
@@ -135,7 +135,7 @@ impl Track {
     ) -> Self {
         let suffix = format!("[{}]", cue.index);
         let tags = tags
-            .into_iter()
+            .iter()
             .filter_map(|tag| {
                 let tag_name = if tag.key.ends_with(&suffix) {
                     Some(&tag.key[0..(tag.key.len() - suffix.len())])
@@ -147,7 +147,7 @@ impl Track {
                 tag_name.map(|key| Tag::new(tag.std_key, key, tag.value.clone()))
             })
             .collect();
-        let visuals = visuals.into_iter().cloned().collect();
+        let visuals = visuals.to_vec();
         Self {
             streaminfo: StreamInfo {
                 md5: [0u8; 16].to_vec(),

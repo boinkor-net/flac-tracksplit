@@ -28,7 +28,7 @@ fn main() {
     let app_log_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
         .compact()
-        .with_writer(writer.clone());
+        .with_writer(writer);
     tracing_subscriber::registry()
         .with(filter)
         .with(app_log_layer)
