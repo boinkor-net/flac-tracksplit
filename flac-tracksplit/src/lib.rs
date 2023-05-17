@@ -262,6 +262,19 @@ impl Track {
             })
             .collect();
         let mut streaminfo = self.streaminfo.clone();
+        if total_samples != streaminfo.total_samples {
+            // This is a pretty peaceful condition (difference is
+            // about less than 1/10s), but let's let curious users
+            // know since it's the one thing that is "imprecise" about
+            // how this tool operates.
+            debug!(
+                inferred = streaminfo.total_samples,
+                actual = total_samples,
+                duration_diff_s = (streaminfo.total_samples as f32 - total_samples as f32)
+                    / (streaminfo.sample_rate as f32),
+                "inferred and actual total samples differ."
+            );
+        }
         streaminfo.total_samples = total_samples;
         let headers = vec![Block::StreamInfo(streaminfo), Block::VorbisComment(comment)];
         let mut blocks = headers.into_iter().chain(pictures.into_iter()).peekable();
