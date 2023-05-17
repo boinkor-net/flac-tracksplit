@@ -11,7 +11,7 @@ use std::{
     fs::{create_dir_all, File},
     io::Write,
     num::NonZeroU32,
-    path::{is_separator, Path, PathBuf},
+    path::{Path, PathBuf},
     str::FromStr,
 };
 use symphonia_bundle_flac::FlacReader;
@@ -74,7 +74,7 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
             let visuals = current_metadata.visuals();
             Track::from_tags(&info, cue, end_ts, &tags, &visuals)
         };
-        info!(number = track.number, pathname = ?track.pathname(), start_ts = track.start_ts, end_ts = track.end_ts);
+        info!(number = track.number, output = ?track.pathname());
         let pathbuf = base_path.as_ref().join(track.pathname());
         let path = &pathbuf;
         if let Some(parent) = path.parent() {
@@ -170,9 +170,21 @@ impl Track {
             .map(|found| &found.value)
     }
 
+    fn is_risky_char(c: char) -> bool {
+        match c {
+            // question marks, single quotes, forward / backslashes
+            // and colons, shell escapey things are not safe; Picard
+            // chokes on them sadly.
+            '_' | '-' | ',' | '.' | '!' | '&' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' => {
+                false
+            }
+            _ => !c.is_alphanumeric(),
+        }
+    }
+
     fn sanitize_pathname(name: &str) -> Cow<str> {
-        if name.contains(is_separator) {
-            Cow::Owned(name.replace(is_separator, "_"))
+        if name.contains(Self::is_risky_char) {
+            Cow::Owned(name.replace(Self::is_risky_char, "_"))
         } else {
             Cow::Borrowed(name)
         }
