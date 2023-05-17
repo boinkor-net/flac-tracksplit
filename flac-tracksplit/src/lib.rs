@@ -175,9 +175,8 @@ impl Track {
             // question marks, single quotes, forward / backslashes
             // and colons, shell escapey things are not safe; Picard
             // chokes on them sadly.
-            '_' | '-' | ',' | '.' | '!' | '&' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' => {
-                false
-            }
+            ' ' | '_' | '-' | ',' | '.' | '!' | '&' | '(' | ')' | '[' | ']' | '{' | '}' | '<'
+            | '>' => false,
             _ => !c.is_alphanumeric(),
         }
     }
