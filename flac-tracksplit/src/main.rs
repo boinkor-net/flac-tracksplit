@@ -13,9 +13,12 @@ struct Args {
     /// Pathnames of .flac files (with embedded CUE sheets) to split into tracks.
     paths: Vec<PathBuf>,
 
-    /// Base path into which to sort resulting per-track FLAC files
+    /// Output directory into which to sort resulting per-track FLAC files.
+    /// Tracks will be named according to this template:
+    ///
+    /// OUTPUT_DIR/<Album Artist>/<Release year> - <Album name>/<Trackno>.<Track title>.flac
     #[arg(long, default_value = "./")]
-    base_path: PathBuf,
+    output_dir: PathBuf,
 }
 
 fn main() {
@@ -36,7 +39,7 @@ fn main() {
         .init();
 
     let args = Args::parse();
-    let base_path = args.base_path.as_path();
+    let base_path = args.output_dir.as_path();
     args.paths
         .into_par_iter()
         .try_for_each(|path| {

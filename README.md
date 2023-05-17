@@ -12,7 +12,7 @@ So maybe this tool can help.
 
 `flac-tracksplit` does frame-accurate FLAC splitting along track boundaries, with a focus on *not doing unnecessary work*, and especially not re-encoding all that valuable data. It commits various crimes to get a split-out set of tracks from your archival copies, but those tracks do contain all the per-track (and whole-album) tags you have set on them, as well as decode correctly (with seeking), and they all start and end on the correct time stamps (caveat, they end on the `FRAME` boundary, which may include a few samples from the next track; this is not more than a few milliseconds in typical use though).
 
-To use it, run `flac-tracksplit --base-path /output/files/will/go/here /path/to/your/archival/copies/*.flac`
+To use it, run `flac-tracksplit --output-dir /output/files/will/go/here /path/to/your/archival/copies/*.flac`
 
 The splitting process is multi-threaded (one archival file being processed per physical core in your machine) and should take no more than about a second per album.
 
