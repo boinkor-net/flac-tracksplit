@@ -19,7 +19,7 @@ maintenance = { status = "passively-maintained" }
 [dependencies]
 anyhow = "1.0.52"
 clap = { version = "4.2.7", features = ["derive"] }
-crc = "2.1.0"
+crc = "3.0.1"
 int-conv = "0.1.4"
 metaflac = "0.2.5"
 more-asserts = "0.3.1"
