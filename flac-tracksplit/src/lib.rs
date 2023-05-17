@@ -517,9 +517,9 @@ fn utf8_encode_be_u64(input: u64) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use proptest::{prop_assert_eq, proptest};
     use std::fmt;
     use symphonia_core::io::BufReader;
-    use tracing::info;
 
     struct V<'a>(&'a [u8]);
 
@@ -543,22 +543,15 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_encoding() {
-        let inputs: &[u64] = &[0x85, 0x863, 0x18427, 0xf88204, 0x04, 8790];
-        for input in inputs {
-            let encoded = utf8_encode_be_u64(*input).expect("encoding");
+    proptest! {
+        #[test]
+        fn test_encoding(input in 0..(2u64.pow(35))) {
+            let encoded = utf8_encode_be_u64(input).expect("encoding");
             let mut buf = BufReader::new(&encoded);
-            let decoded =
-                utf8_decode_be_u64(&mut buf).expect(&format!("decoding {:b}", V(&encoded)));
-            assert_eq!(
-                (*input, encoded.len() as u32),
-                decoded,
+            let decoded = utf8_decode_be_u64(&mut buf).expect(&format!("decoding {:b}", V(&encoded)));
+            prop_assert_eq!((input, encoded.len() as u32), decoded,
                 "received:\n{:#064b} but wanted:\n{:#064b}",
-                decoded.0,
-                input
-            );
-            info!(input, "yay");
+                decoded.0, input);
         }
     }
 }
