@@ -32,4 +32,4 @@ tracing-indicatif = "0.3.4"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [dev-dependencies]
-proptest = "1.1.0"
+proptest = "1.2.0"
