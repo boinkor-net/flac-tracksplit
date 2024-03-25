@@ -17,13 +17,13 @@ path = "src/main.rs"
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-anyhow = "1.0.80"
+anyhow = "1.0.81"
 bytesize = { version = "1.3.0", features = ["serde"] }
-clap = { version = "4.5.2", features = ["derive"] }
+clap = { version = "4.5.3", features = ["derive"] }
 int-conv = "0.1.4"
 metaflac = "0.2.5"
 more-asserts = "0.3.1"
-rayon = "1.9.0"
+rayon = "1.10.0"
 symphonia-bundle-flac = "0.5.4"
 symphonia-core = "0.5.3"
 symphonia-utils-xiph = "0.5.2"
