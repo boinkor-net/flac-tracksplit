@@ -17,7 +17,7 @@ path = "src/main.rs"
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-anyhow = "1.0.82"
+anyhow = "1.0.83"
 bytesize = { version = "1.3.0", features = ["serde"] }
 clap = { version = "4.5.4", features = ["derive"] }
 int-conv = "0.1.4"
