@@ -21,7 +21,7 @@ use symphonia_core::{
     io::{MediaSourceStream, Monitor, ReadBytes},
     meta::{StandardVisualKey, Tag, Value, Visual},
 };
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 
 #[instrument(skip(base_path, metadata_padding), err)]
 pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
@@ -60,6 +60,14 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     let mut track_paths = vec![];
     let mut cue_iter = cues.iter().peekable();
     let mut audio_buffer = Vec::with_capacity(file_length.try_into().unwrap());
+    if cue_iter.peek().is_none() {
+        warn!(
+            action="skipping",
+            remedy="Use `metaflac --import-cuesheet-from` to add the sheet and make the file splittable.",
+            "No embedded CUE sheet found."
+        );
+        return Ok(track_paths);
+    }
     while let Some(cue) = cue_iter.next() {
         audio_buffer.clear();
         let next = cue_iter.peek();
