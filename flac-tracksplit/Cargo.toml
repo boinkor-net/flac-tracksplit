@@ -18,7 +18,7 @@ maintenance = { status = "passively-maintained" }
 
 [dependencies]
 anyhow = "1.0.96"
-bytesize = { version = "2.0.0", features = ["serde"] }
+bytesize = { version = "2.0.1", features = ["serde"] }
 clap = { version = "4.5.31", features = ["derive"] }
 int-conv = "0.1.4"
 metaflac = "0.2.7"
