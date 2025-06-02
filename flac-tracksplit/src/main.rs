@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use bytesize::ByteSize;
 use clap::{Parser, Subcommand};
-use flac_tracksplit::{extract_sample_range, get_sample_rate, split_one_file};
+use flac_tracksplit::{extract_sample_range, get_sample_rate, get_total_samples, split_one_file};
 use rayon::prelude::*;
 use tracing::error;
 use tracing_subscriber::prelude::*;
@@ -41,13 +41,13 @@ enum Commands {
         /// Input FLAC file
         input: PathBuf,
 
-        /// Starting time in milliseconds
+        /// Starting time in milliseconds (negative values count from end)
         #[arg(long = "from", value_name = "MS")]
-        from_ms: u64,
+        from_ms: i64,
 
         /// Ending time in milliseconds
         #[arg(long = "to", value_name = "MS")]
-        to_ms: u64,
+        to_ms: i64,
 
         /// Output FLAC file
         output: PathBuf,
@@ -81,28 +81,67 @@ fn main() -> anyhow::Result<()> {
             output,
         }) => {
             // New split subcommand
-            if from_ms >= to_ms {
-                anyhow::bail!("from_ms ({}) must be less than to_ms ({})", from_ms, to_ms);
-            }
-
-            // Get sample rate to convert milliseconds to samples
+            // Get sample rate and total samples to convert milliseconds to samples
             let sample_rate = get_sample_rate(&input)
                 .with_context(|| format!("reading sample rate from {:?}", input))?;
+            let total_samples = get_total_samples(&input)
+                .with_context(|| format!("reading total samples from {:?}", input))?;
 
-            let from_sample = (from_ms * sample_rate) / 1000;
-            let to_sample = (to_ms * sample_rate) / 1000;
+            // Convert total samples to milliseconds for duration
+            let total_ms = (total_samples * 1000) / sample_rate;
+
+            // Handle negative from_ms (count from end)
+            let adjusted_from_ms = if from_ms < 0 {
+                // Clip to 0 if negative offset exceeds duration
+                (total_ms as i64 + from_ms).max(0)
+            } else {
+                // Clip to total duration if positive offset exceeds duration
+                from_ms.min(total_ms as i64)
+            };
+
+            // Handle to_ms, clipping to total duration
+            let adjusted_to_ms = if to_ms < 0 {
+                // Negative to_ms counts from end
+                (total_ms as i64 + to_ms).max(0)
+            } else {
+                // Clip to total duration
+                to_ms.min(total_ms as i64)
+            };
+
+            // Ensure from is still less than to after adjustments
+            if adjusted_from_ms >= adjusted_to_ms {
+                anyhow::bail!(
+                    "After clipping, from_ms ({}) must be less than to_ms ({}). Original values: from={}, to={}, duration={}ms",
+                    adjusted_from_ms, adjusted_to_ms, from_ms, to_ms, total_ms
+                );
+            }
+
+            // Convert to samples
+            let from_sample = (adjusted_from_ms as u64 * sample_rate) / 1000;
+            let to_sample = (adjusted_to_ms as u64 * sample_rate) / 1000;
+
+            // Ensure we don't exceed total samples due to rounding
+            let from_sample = from_sample.min(total_samples);
+            let to_sample = to_sample.min(total_samples);
 
             extract_sample_range(&input, from_sample, to_sample, &output).with_context(|| {
                 format!(
                     "extracting {}ms to {}ms (samples {} to {}) from {:?} to {:?}",
-                    from_ms, to_ms, from_sample, to_sample, input, output
+                    adjusted_from_ms, adjusted_to_ms, from_sample, to_sample, input, output
                 )
             })?;
 
             println!(
                 "Successfully extracted {}ms to {}ms (samples {} to {}) from {:?} to {:?}",
-                from_ms, to_ms, from_sample, to_sample, input, output
+                adjusted_from_ms, adjusted_to_ms, from_sample, to_sample, input, output
             );
+            
+            if adjusted_from_ms != from_ms || adjusted_to_ms != to_ms {
+                println!(
+                    "Note: Values were clipped to valid range (original: from={}ms, to={}ms, duration={}ms)",
+                    from_ms, to_ms, total_ms
+                );
+            }
             Ok(())
         }
         None => {

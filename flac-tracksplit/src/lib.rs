@@ -40,6 +40,24 @@ pub fn get_sample_rate<P: AsRef<Path> + Debug>(input_path: P) -> anyhow::Result<
     Ok(info.sample_rate as u64)
 }
 
+/// Get the total number of samples in a FLAC file
+#[instrument(err)]
+pub fn get_total_samples<P: AsRef<Path> + Debug>(input_path: P) -> anyhow::Result<u64> {
+    let file = File::open(&input_path).with_context(|| format!("opening {:?}", input_path))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let reader =
+        FlacReader::try_new(mss, &Default::default()).context("could not create flac reader")?;
+
+    let symphonia_track = reader.default_track().context("no default track")?;
+    let data = match &symphonia_track.codec_params.extra_data {
+        Some(it) => it,
+        _ => bail!("Unclear track codec params - Not a flac file?"),
+    };
+    let info = StreamInfo::from_bytes(data);
+
+    Ok(info.total_samples)
+}
+
 #[instrument(skip(base_path, metadata_padding), err)]
 pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     input_path: P,
@@ -161,13 +179,8 @@ pub fn extract_sample_range<P: AsRef<Path> + Debug, O: AsRef<Path> + Debug>(
         bail!("track time_base denominator ({:?}) should be the same as the overall streaminfo ({:?})", time_base, info.sample_rate);
     }
 
-    if to_sample > info.total_samples {
-        bail!(
-            "to_sample ({}) exceeds total samples in file ({})",
-            to_sample,
-            info.total_samples
-        );
-    }
+    // Clip to_sample to total_samples if it exceeds the file length
+    let to_sample = to_sample.min(info.total_samples);
 
     // Create a synthetic track for the sample range
     let metadata = reader.metadata();
