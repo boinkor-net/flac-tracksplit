@@ -4,7 +4,6 @@ use metaflac::{
     block::{Picture, PictureType, StreamInfo, VorbisComment},
     Block,
 };
-use more_asserts as ma;
 use std::{
     borrow::Cow,
     fmt::Debug,
@@ -22,6 +21,24 @@ use symphonia_core::{
     meta::{StandardVisualKey, Tag, Value, Visual},
 };
 use tracing::{debug, info, instrument, warn};
+
+/// Get the sample rate of a FLAC file
+#[instrument(err)]
+pub fn get_sample_rate<P: AsRef<Path> + Debug>(input_path: P) -> anyhow::Result<u64> {
+    let file = File::open(&input_path).with_context(|| format!("opening {:?}", input_path))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let reader =
+        FlacReader::try_new(mss, &Default::default()).context("could not create flac reader")?;
+
+    let symphonia_track = reader.default_track().context("no default track")?;
+    let data = match &symphonia_track.codec_params.extra_data {
+        Some(it) => it,
+        _ => bail!("Unclear track codec params - Not a flac file?"),
+    };
+    let info = StreamInfo::from_bytes(data);
+
+    Ok(info.sample_rate as u64)
+}
 
 #[instrument(skip(base_path, metadata_padding), err)]
 pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
@@ -108,6 +125,96 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     }
     info!("Done with disc image");
     Ok(track_paths)
+}
+
+#[instrument(skip(input_path, output_path), err)]
+pub fn extract_sample_range<P: AsRef<Path> + Debug, O: AsRef<Path> + Debug>(
+    input_path: P,
+    from_sample: u64,
+    to_sample: u64,
+    output_path: O,
+) -> anyhow::Result<()> {
+    let file = File::open(&input_path).with_context(|| format!("opening {:?}", input_path))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut reader =
+        FlacReader::try_new(mss, &Default::default()).context("could not create flac reader")?;
+
+    let symphonia_track = reader.default_track().context("no default track")?;
+    let track_id = symphonia_track.id;
+    let data = match &symphonia_track.codec_params.extra_data {
+        Some(it) => it,
+        _ => bail!("Unclear track codec params - Not a flac file?"),
+    };
+    let info = StreamInfo::from_bytes(data);
+
+    let time_base = symphonia_track
+        .codec_params
+        .time_base
+        .context("track time base")?;
+    if time_base.numer != 1 {
+        bail!(
+            "track time_base numerator should be a fraction like 1/44000, instead {:?}",
+            time_base
+        );
+    }
+    if time_base.denom != info.sample_rate {
+        bail!("track time_base denominator ({:?}) should be the same as the overall streaminfo ({:?})", time_base, info.sample_rate);
+    }
+
+    if to_sample > info.total_samples {
+        bail!(
+            "to_sample ({}) exceeds total samples in file ({})",
+            to_sample,
+            info.total_samples
+        );
+    }
+
+    // Create a synthetic track for the sample range
+    let metadata = reader.metadata();
+    let current_metadata = metadata.current().context("track metadata")?;
+    let tags = current_metadata.tags();
+    let visuals = current_metadata.visuals();
+
+    let synthetic_cue = symphonia_core::formats::Cue {
+        index: 1,
+        start_ts: from_sample,
+        tags: vec![],
+        points: vec![],
+    };
+
+    let track = Track::from_tags(&info, &synthetic_cue, to_sample, tags, visuals);
+
+    // Seek to the start position before reading packets
+    let seek_result = reader.seek(
+        symphonia_core::formats::SeekMode::Accurate,
+        symphonia_core::formats::SeekTo::TimeStamp {
+            ts: from_sample,
+            track_id,
+        },
+    );
+    if let Err(e) = seek_result {
+        warn!(
+            "Failed to seek to sample {}: {:?}. Continuing without seek.",
+            from_sample, e
+        );
+    }
+
+    let mut f = File::create(&output_path)
+        .with_context(|| format!("creating output file {:?}", output_path))?;
+
+    let mut audio_buffer = Vec::new();
+    let sample_count = track
+        .write_audio(&mut reader, &mut audio_buffer)
+        .with_context(|| "extracting audio samples".to_string())?;
+
+    track
+        .write_metadata(sample_count, 8192, &mut f) // Use 8KB padding
+        .with_context(|| format!("writing metadata to {:?}", output_path))?;
+    f.write_all(&audio_buffer)
+        .with_context(|| format!("writing audio data to {:?}", output_path))?;
+
+    info!("Extracted {} samples to {:?}", sample_count, output_path);
+    Ok(())
 }
 
 /// The track number used to identify a lead-out track on a cue sheet.
@@ -321,6 +428,7 @@ impl Track {
 
         let mut last_end: u64 = 0;
         let mut frame = OffsetFrame::default();
+        let mut first_packet = true;
         loop {
             let packet = from
                 .next_packet()
@@ -328,11 +436,22 @@ impl Track {
 
             let ts = packet.ts;
             let dur = packet.dur;
-            ma::assert_ge!(
-                ts,
-                self.start_ts,
-                "Packet timestamp is not >= this track's start ts. Potential bug exposed by the previous track.",
-            );
+
+            if first_packet {
+                first_packet = false;
+            }
+
+            // Skip packets that start before our track's start time
+            // This can happen when seeking to a position that's not frame-aligned
+            if ts < self.start_ts {
+                // Check if this packet overlaps with our start time
+                if ts + dur <= self.start_ts {
+                    // Packet is entirely before our start, skip it
+                    continue;
+                }
+                // Packet overlaps with our start, but we still need to process it
+                // The OffsetFrame will handle adjusting the sample numbers correctly
+            }
 
             // Adjust the frame header:
             // * Adjust sample/frame number such that each track starts at frame/sample 0. This should fix seeking.
