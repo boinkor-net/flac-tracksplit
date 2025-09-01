@@ -17,19 +17,19 @@ path = "src/main.rs"
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-anyhow = "1.0.98"
+anyhow = "1.0.99"
 bytesize = { version = "2.0.1", features = ["serde"] }
-clap = { version = "4.5.37", features = ["derive"] }
+clap = { version = "4.5.46", features = ["derive"] }
 int-conv = "0.1.4"
 metaflac = "0.2.7"
 more-asserts = "0.3.1"
-rayon = "1.10.0"
+rayon = "1.11.0"
 symphonia-bundle-flac = "0.5.4"
 symphonia-core = "0.5.3"
 symphonia-utils-xiph = "0.5.2"
 tracing = "0.1.40"
-tracing-indicatif = "0.3.6"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-indicatif = "0.3.10"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 [dev-dependencies]
-proptest = "1.5.0"
+proptest = "1.7.0"
