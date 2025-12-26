@@ -1,6 +1,6 @@
 ![Build Status](https://github.com/antifuchs/flac-tracksplit/actions/workflows/ci.yml/badge.svg) [![Docs](https://docs.rs/flac-tracksplit/badge.svg)](https://docs.rs/flac-tracksplit/) [![crates.io](https://img.shields.io/crates/v/flac-tracksplit.svg)](https://crates.io/crates/flac-tracksplit)
 
-# `flac-tracksplit` - a tool for splitting whole-disc FLAC files with embedded CUE sheets up into multiple tracks
+# `flac-tracksplit` - a tool for splitting FLAC files with embedded CUE sheets or extracting time ranges
 
 Say you were impressed by the conceptual purity of representing a *whole CD* as a single losslessly-compressed FLAC file, for archival purposes, say 11 years ago. You sunk a ton of time into ripping these CDs, dedicated a ton of storage space to them and also ensured that all the CDs you have are accurately represented as MusicBrainz releases and have perfect metadata, and all that.
 
@@ -12,9 +12,33 @@ So maybe this tool can help.
 
 `flac-tracksplit` does frame-accurate FLAC splitting along track boundaries, with a focus on *not doing unnecessary work*, and especially not re-encoding all that valuable data. It commits various crimes to get a split-out set of tracks from your archival copies, but those tracks do contain all the per-track (and whole-album) tags you have set on them, as well as decode correctly (with seeking), and they all start and end on the correct time stamps (caveat, they end on the `FRAME` boundary, which may include a few samples from the next track; this is not more than a few milliseconds in typical use though).
 
-To use it, run `flac-tracksplit --output-dir /output/files/will/go/here /path/to/your/archival/copies/*.flac`
+## Usage
+
+### Split FLAC+CUE files into tracks (original functionality)
+
+To split whole-disc FLAC files with embedded CUE sheets into individual tracks:
+
+```bash
+flac-tracksplit --output-dir /output/files/will/go/here /path/to/your/archival/copies/*.flac
+```
 
 The splitting process is multi-threaded (one archival file being processed per physical core in your machine) and should take no more than about a second per album.
+
+### Extract time ranges from FLAC files
+
+To extract a specific time range from any FLAC file:
+
+```bash
+flac-tracksplit split input.flac --from 35450 --to 44150 output.flac
+```
+
+Where:
+- `input.flac` is the source FLAC file
+- `--from 35450` specifies the start time in milliseconds
+- `--to 44150` specifies the end time in milliseconds  
+- `output.flac` is the extracted segment
+
+This performs frame-accurate extraction without re-encoding, preserving all audio quality and metadata.
 
 ## Future Work
 
