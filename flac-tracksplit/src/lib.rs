@@ -1,14 +1,14 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use int_conv::Truncate;
 use metaflac::{
-    block::{Picture, PictureType, StreamInfo, VorbisComment},
     Block,
+    block::{Picture, PictureType, StreamInfo, VorbisComment},
 };
 use more_asserts as ma;
 use std::{
     borrow::Cow,
     fmt::Debug,
-    fs::{create_dir_all, File},
+    fs::{File, create_dir_all},
     io::Write,
     num::NonZeroU32,
     path::{Path, PathBuf},
@@ -16,12 +16,20 @@ use std::{
 };
 use symphonia_bundle_flac::FlacReader;
 use symphonia_core::{
-    checksum::{Crc16Ansi, Crc8Ccitt},
-    formats::{Cue, FormatReader, Packet},
+    checksum::{Crc8Ccitt, Crc16Ansi},
+    formats::{Cue, CuePoint, FormatReader, Packet},
     io::{MediaSourceStream, Monitor, ReadBytes},
     meta::{StandardVisualKey, Tag, Value, Visual},
 };
 use tracing::{debug, info, instrument, warn};
+
+/// Detect if the current cue track has any pregaps, and return their end/start timestamps, if so.
+fn maybe_pregap(cue: &Cue) -> Option<CuePoint> {
+    if !cue.index == 1 || cue.points.len() == 1 {
+        return None;
+    }
+    cue.points.last().cloned()
+}
 
 #[instrument(skip(base_path, metadata_padding), err)]
 pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
@@ -29,6 +37,7 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     base_path: B,
     metadata_padding: u32,
 ) -> anyhow::Result<Vec<PathBuf>> {
+    let base_path = base_path.as_ref();
     let file = File::open(&input_path).with_context(|| format!("opening {:?}", input_path))?;
     let file_length = file.metadata().context("file metadata")?.len();
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -50,7 +59,11 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
         );
     }
     if time_base.denom != info.sample_rate {
-        bail!("track time_base denominator ({:?}) should be the same as the overall streaminfo ({:?})", time_base, info.sample_rate);
+        bail!(
+            "track time_base denominator ({:?}) should be the same as the overall streaminfo ({:?})",
+            time_base,
+            info.sample_rate
+        );
     }
     // since we're sure that the sample rate is an even denominator of
     // symphonia's TimeBase, we can assume that the time stamps are in
@@ -62,12 +75,45 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
     let mut audio_buffer = Vec::with_capacity(file_length.try_into().unwrap());
     if cue_iter.peek().is_none() {
         warn!(
-            action="skipping",
-            remedy="Use `metaflac --import-cuesheet-from` to add the sheet and make the file splittable.",
+            action = "skipping",
+            remedy = "Use `metaflac --import-cuesheet-from` to add the sheet and make the file splittable.",
             "No embedded CUE sheet found."
         );
         return Ok(track_paths);
     }
+
+    // Detect pregap track 0:
+    let mut pregap_start_ts: Option<u64> = None;
+    if let Some(cue) = cue_iter.peek()
+        && let Some(pregap) = maybe_pregap(cue)
+    {
+        let pregap_track = {
+            let metadata = reader.metadata();
+            let current_metadata = metadata.current().context("track tags")?;
+            let tags = current_metadata.tags();
+            let visuals = current_metadata.visuals();
+            Track::from_tags(
+                &info,
+                cue,
+                pregap.start_offset_ts,
+                tags,
+                visuals,
+                None,
+                Some(0),
+            )
+        };
+        let pregap_path = pregap_track.write_to_file(
+            base_path,
+            &mut reader,
+            &mut audio_buffer,
+            metadata_padding,
+        )?;
+        debug!(number = pregap_track.number, output = ?pregap_path, "Pregap");
+        track_paths.push(pregap_path);
+        pregap_start_ts = Some(pregap.start_offset_ts);
+    }
+
+    // Handle regular tracks:
     while let Some(cue) = cue_iter.next() {
         audio_buffer.clear();
         let next = cue_iter.peek();
@@ -86,25 +132,23 @@ pub fn split_one_file<P: AsRef<Path> + Debug, B: AsRef<Path> + Debug>(
             let current_metadata = metadata.current().context("track tags")?;
             let tags = current_metadata.tags();
             let visuals = current_metadata.visuals();
-            Track::from_tags(&info, cue, end_ts, tags, visuals)
+            Track::from_tags(
+                &info,
+                cue,
+                end_ts,
+                tags,
+                visuals,
+                pregap_start_ts.take(),
+                None,
+            )
         };
         debug!(number = track.number, output = ?track.pathname(), "Track");
-        let pathbuf = base_path.as_ref().join(track.pathname());
-        let path = &pathbuf;
-        if let Some(parent) = path.parent() {
-            create_dir_all(parent).context("creating album dir")?;
-        }
-        let mut f = File::create(path).unwrap();
-        let sample_count = track
-            .write_audio(&mut reader, &mut audio_buffer)
-            .with_context(|| format!("buffering track {:?} audio", path))?;
-
-        track
-            .write_metadata(sample_count, metadata_padding, &mut f)
-            .with_context(|| format!("writing track {:?}", path))?;
-        f.write_all(&audio_buffer)
-            .with_context(|| format!("writing track {:?} audio", path))?;
-        track_paths.push(pathbuf);
+        track_paths.push(track.write_to_file(
+            base_path,
+            &mut reader,
+            &mut audio_buffer,
+            metadata_padding,
+        )?);
     }
     info!("Done with disc image");
     Ok(track_paths)
@@ -147,7 +191,10 @@ impl Track {
         end_ts: u64,
         tags: &[Tag],
         visuals: &[Visual],
+        start_ts: Option<u64>,
+        track_number: Option<u32>,
     ) -> Self {
+        let start_ts = start_ts.unwrap_or(cue.start_ts);
         let suffix = format!("[{}]", cue.index);
         let tags = tags
             .iter()
@@ -166,11 +213,11 @@ impl Track {
         Self {
             streaminfo: StreamInfo {
                 md5: [0u8; 16].to_vec(),
-                total_samples: (end_ts - cue.start_ts),
+                total_samples: (end_ts - start_ts),
                 ..streaminfo.clone()
             },
-            number: cue.index,
-            start_ts: cue.start_ts,
+            number: track_number.unwrap_or(cue.index),
+            start_ts,
             end_ts,
             tags,
             visuals,
@@ -237,23 +284,20 @@ impl Track {
             }
             _ => None,
         };
-        if let (Some(Value::String(track)), Some(Value::String(title))) =
-            (self.tag_value("TRACKNUMBER"), self.tag_value("TITLE"))
-        {
-            if let Ok(trackno) = <usize as FromStr>::from_str(track) {
-                buf.push(format!(
-                    "{}{:02}.{}.flac",
-                    disc_prefix.as_deref().unwrap_or(""),
-                    trackno,
-                    Self::sanitize_pathname(title)
-                ));
-            } else {
-                buf.push(format!(
-                    "{}99.{}.flac",
-                    disc_prefix.as_deref().unwrap_or(""),
-                    Self::sanitize_pathname(title)
-                ));
-            }
+
+        if let Some(Value::String(title)) = self.tag_value("TITLE") {
+            buf.push(format!(
+                "{}{:02}.{}.flac",
+                disc_prefix.as_deref().unwrap_or(""),
+                self.number,
+                Self::sanitize_pathname(title)
+            ));
+        } else {
+            buf.push(format!(
+                "{}{:02}.flac",
+                disc_prefix.as_deref().unwrap_or(""),
+                self.number,
+            ));
         }
         buf
     }
@@ -366,6 +410,30 @@ impl Track {
                 return Ok(frame.samples_processed);
             }
         }
+    }
+
+    pub fn write_to_file(
+        &self,
+        base_path: &Path,
+        reader: &mut FlacReader,
+        mut audio_buffer: &mut Vec<u8>,
+        metadata_padding: u32,
+    ) -> anyhow::Result<PathBuf> {
+        let pathbuf = base_path.join(self.pathname());
+        let path = &pathbuf;
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent).context("creating album dir")?;
+        }
+        let mut f = File::create(path).unwrap();
+        let sample_count = self
+            .write_audio(reader, &mut audio_buffer)
+            .with_context(|| format!("buffering track {:?} audio", path))?;
+
+        self.write_metadata(sample_count, metadata_padding, &mut f)
+            .with_context(|| format!("writing track {:?}", path))?;
+        f.write_all(audio_buffer)
+            .with_context(|| format!("writing track {:?} audio", path))?;
+        Ok(pathbuf)
     }
 }
 
