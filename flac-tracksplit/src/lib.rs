@@ -196,7 +196,7 @@ impl Track {
         }
     }
 
-    fn sanitize_pathname(name: &str) -> Cow<str> {
+    fn sanitize_pathname(name: &'_ str) -> Cow<'_, str> {
         if name.contains(Self::is_risky_char) {
             Cow::Owned(name.replace(Self::is_risky_char, "_"))
         } else {
@@ -225,17 +225,34 @@ impl Track {
             buf.push("Unknown Album");
         }
 
+        let disc_prefix = match (self.tag_value("DISCNUMBER"), self.tag_value("TOTALDISCS")) {
+            (Some(Value::String(disc)), Some(Value::String(disc_total)))
+                if usize::from_str(&disc_total).map(|total| total > 1) == Ok(true) =>
+            {
+                if let Ok(discno) = usize::from_str(&disc) {
+                    Some(format!("{:02}-", discno))
+                } else {
+                    Some(format!("{}-", disc))
+                }
+            }
+            _ => None,
+        };
         if let (Some(Value::String(track)), Some(Value::String(title))) =
             (self.tag_value("TRACKNUMBER"), self.tag_value("TITLE"))
         {
             if let Ok(trackno) = <usize as FromStr>::from_str(track) {
                 buf.push(format!(
-                    "{:02}.{}.flac",
+                    "{}{:02}.{}.flac",
+                    disc_prefix.as_deref().unwrap_or(""),
                     trackno,
                     Self::sanitize_pathname(title)
                 ));
             } else {
-                buf.push(format!("99.{}.flac", Self::sanitize_pathname(title)));
+                buf.push(format!(
+                    "{}99.{}.flac",
+                    disc_prefix.as_deref().unwrap_or(""),
+                    Self::sanitize_pathname(title)
+                ));
             }
         }
         buf

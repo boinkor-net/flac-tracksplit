@@ -18,7 +18,7 @@ struct Args {
     /// Output directory into which to sort resulting per-track FLAC files.
     /// Tracks will be named according to this template:
     ///
-    /// OUTPUT_DIR/<Album Artist>/<Release year> - <Album name>/<Trackno>.<Track title>.flac
+    /// OUTPUT_DIR/<Album Artist>/<Release year> - <Album name>/[<discno>-]<Trackno>.<Track title>.flac
     #[arg(long, default_value = "./")]
     output_dir: PathBuf,
 
