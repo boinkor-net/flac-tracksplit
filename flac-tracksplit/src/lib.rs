@@ -227,9 +227,9 @@ impl Track {
 
         let disc_prefix = match (self.tag_value("DISCNUMBER"), self.tag_value("TOTALDISCS")) {
             (Some(Value::String(disc)), Some(Value::String(disc_total)))
-                if usize::from_str(&disc_total).map(|total| total > 1) == Ok(true) =>
+                if usize::from_str(disc_total).map(|total| total > 1) == Ok(true) =>
             {
-                if let Ok(discno) = usize::from_str(&disc) {
+                if let Ok(discno) = usize::from_str(disc) {
                     Some(format!("{:02}-", discno))
                 } else {
                     Some(format!("{}-", disc))
