@@ -6,8 +6,8 @@ use clap::Parser;
 use flac_tracksplit::split_one_file;
 use rayon::prelude::*;
 use tracing::error;
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about=None)]
