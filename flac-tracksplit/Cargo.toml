@@ -19,7 +19,7 @@ maintenance = { status = "passively-maintained" }
 [dependencies]
 anyhow = "1.0.100"
 bytesize = { version = "2.3.1", features = ["serde"] }
-clap = { version = "4.5.54", features = ["derive"] }
+clap = { version = "4.5.57", features = ["derive"] }
 int-conv = "0.1.4"
 metaflac = "0.2.7"
 more-asserts = "0.3.1"
@@ -28,8 +28,8 @@ symphonia-bundle-flac = "0.5.5"
 symphonia-core = "0.5.3"
 symphonia-utils-xiph = "0.5.2"
 tracing = "0.1.44"
-tracing-indicatif = "0.3.13"
+tracing-indicatif = "0.3.14"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [dev-dependencies]
-proptest = "1.9.0"
+proptest = "1.10.0"
